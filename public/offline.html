@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deiza — Sin conexión</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #F2EDE6;
+      color: #2a2623;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      text-align: center;
+    }
+    .logo {
+      width: 80px;
+      height: 80px;
+      margin-bottom: 2rem;
+      opacity: 0.6;
+    }
+    h1 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 1.75rem;
+      margin-bottom: 0.75rem;
+      color: #2a2623;
+    }
+    p {
+      font-size: 0.95rem;
+      color: #5a524a;
+      max-width: 320px;
+      line-height: 1.6;
+      margin-bottom: 2rem;
+    }
+    button {
+      font-family: 'Inter', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 500;
+      background: #8C2F39;
+      color: #F2EDE6;
+      border: none;
+      padding: 0.875rem 2.5rem;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    button:hover { opacity: 0.85; }
+    button:active { transform: scale(0.98); }
+  </style>
+</head>
+<body>
+  <img src="/logo192.png" alt="" class="logo" />
+  <h1>Sin conexión</h1>
+  <p>Deiza necesita conexión a internet para conectarse con la IA. Revisa tu conexión e inténtalo de nuevo.</p>
+  <button onclick="window.location.reload()">Reintentar</button>
+</body>
+</html>

@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pyflakes
+      - name: Compile
+        run: python -m py_compile backend/*.py backend/deiza_mapper/*.py
+      - name: Undefined names
+        run: |
+          out=$(python -m pyflakes backend/*.py backend/deiza_mapper/*.py | grep "undefined name" || true)
+          if [ -n "$out" ]; then echo "$out"; exit 1; fi

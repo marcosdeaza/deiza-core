@@ -1,0 +1,38 @@
+use_default_settings: true
+
+server:
+  secret_key: "change-me"  # overridden by SEARXNG_SECRET
+  limiter: false
+  image_proxy: true
+  bind_address: "0.0.0.0:8080"
+
+ui:
+  default_locale: "es"
+
+search:
+  formats:
+    - html
+    - json
+  default_lang: "es-ES"
+
+outgoing:
+  request_timeout: 12.0
+  max_request_timeout: 20.0
+
+engines:
+  - name: google
+    engine: google
+    use_mobile_ui: false
+  - name: bing
+    engine: bing
+  - name: duckduckgo
+    engine: duckduckgo
+  - name: wikipedia
+    engine: wikipedia
+    language: "es"
+  - name: bing images
+    engine: bing_images
+    categories: images
+  - name: google images
+    engine: google_images
+    categories: images

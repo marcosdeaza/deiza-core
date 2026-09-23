@@ -1,0 +1,17 @@
+{
+  "name": "Deiza",
+  "short_name": "Deiza",
+  "description": "Chat con IA: genera documentos, webs, código e imágenes",
+  "start_url": "/workspace",
+  "display": "standalone",
+  "background_color": "#1c1714",
+  "theme_color": "#1c1714",
+  "orientation": "any",
+  "scope": "/",
+  "lang": "es",
+  "icons": [
+    { "src": "/app-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/app-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/logo192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" }
+  ]
+}

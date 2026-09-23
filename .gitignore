@@ -1,0 +1,37 @@
+# Dependencies and builds
+node_modules/
+dist/
+dist-ssr/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Secrets and local data
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*service-account*.json
+backend/instance/
+backend/uploads/
+*.db
+*.sqlite
+*.sqlite3
+
+# Native shells
+ios/
+android/
+
+# Logs and editors
+*.log
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.sw?
+coverage/
+*.bak
+*.bak-*

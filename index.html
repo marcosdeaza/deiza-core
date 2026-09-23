@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#1c1714" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Deiza" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="format-detection" content="telephone=no" />
+    <title>Deiza — AI Workspace Agentic & Multimodal</title>
+    <meta name="description" content="Deiza — AI Workspace Agentic, Multimodal, Rápido y Premium con modelos Gas, Liquid y Solid." />
+    <meta property="og:title" content="Deiza" />
+    <meta property="og:description" content="Un espacio tranquilo para que las ideas crudas se conviertan en realidad." />
+    <meta property="og:image" content="https://deiza.org/apple-touch-icon.png" />
+    <meta property="og:type" content="website" />
+
+    <script>
+      // Build-version check: swapdist rewrites version.json on every deploy. When the
+      // stored version differs, stale caches / old service workers are purged and the
+      // page reloads once. Skipped entirely inside the native app (assets ship with it).
+      (function () {
+        try {
+          if (location.protocol === 'capacitor:' || location.protocol === 'ionic:') return;
+          var KEY = 'deiza_build_version';
+          fetch('/version.json?v=' + Date.now(), { cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (v) {
+              if (!v || !v.v) return;
+              var cur = String(v.v);
+              var prev = null;
+              try { prev = localStorage.getItem(KEY); } catch (e) {}
+              if (prev === cur) return;
+              try { localStorage.setItem(KEY, cur); } catch (e) {}
+              if (!prev) return; // first visit: nothing to purge
+              if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(function (regs) { regs.forEach(function (r) { r.unregister(); }); });
+              }
+              if ('caches' in window) {
+                caches.keys().then(function (names) { names.forEach(function (n) { caches.delete(n); }); });
+              }
+              if (!sessionStorage.getItem('deiza_reload_done')) {
+                sessionStorage.setItem('deiza_reload_done', '1');
+                location.reload();
+              }
+            })
+            .catch(function () {});
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

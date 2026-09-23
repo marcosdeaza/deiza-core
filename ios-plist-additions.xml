@@ -1,0 +1,47 @@
+<!-- Add these keys inside the main <dict> of ios/App/App/Info.plist -->
+<!-- after running: npx cap add ios -->
+
+<key>NSMicrophoneUsageDescription</key>
+<string>Deiza necesita acceso al micrófono para grabar mensajes de voz.</string>
+
+<key>NSCameraUsageDescription</key>
+<string>Deiza necesita acceso a la cámara para adjuntar fotos a tus mensajes.</string>
+
+<key>NSPhotoLibraryUsageDescription</key>
+<string>Deiza necesita acceso a tus fotos para adjuntarlas a tus mensajes.</string>
+
+<key>NSPhotoLibraryAddUsageDescription</key>
+<string>Deiza puede guardar imágenes en tu biblioteca de fotos.</string>
+
+<key>NSUserTrackingUsageDescription</key>
+<string>No rastreamos tu actividad fuera de Deiza.</string>
+
+<!-- Push notifications background mode -->
+<key>UIBackgroundModes</key>
+<array>
+    <string>fetch</string>
+    <string>remote-notification</string>
+</array>
+
+<!-- Status bar appears light over the Deiza rose background -->
+<key>UIStatusBarStyle</key>
+<string>UIStatusBarStyleDefault</string>
+<key>UIViewControllerBasedStatusBarAppearance</key>
+<true/>
+
+<!-- Support all orientations on iPhone -->
+<key>UISupportedInterfaceOrientations</key>
+<array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+</array>
+
+<!-- Support all orientations on iPad -->
+<key>UISupportedInterfaceOrientations~ipad</key>
+<array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+</array>

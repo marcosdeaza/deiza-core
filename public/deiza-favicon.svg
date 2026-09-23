@@ -1,0 +1,9 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Deiza favicon - large visible logo -->
+  <rect width="512" height="512" rx="96" fill="#8C2F39"/>
+  <!-- Letter D shape -->
+  <path d="M140 128h108c82 0 144 57.6 144 128s-62 128-144 128H140V128z" fill="#FDFBF7"/>
+  <path d="M188 176v160h60c52.9 0 96-35.8 96-80s-43.1-80-96-80h-60z" fill="#8C2F39"/>
+  <!-- Small dot accent -->
+  <circle cx="340" cy="370" r="22" fill="#FDFBF7" opacity="0.7"/>
+</svg>
