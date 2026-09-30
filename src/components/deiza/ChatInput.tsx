@@ -73,6 +73,15 @@ const ChatInput = ({
   const valueRef = useRef('');
   const native = isNative();
 
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('deiza:composer_draft');
+      if (saved && !value) {
+        setValue(saved);
+      }
+    } catch {}
+  }, []);
+
   const restoreHistory = useCallback((valueNow: string, dir: 1 | -1) => {
     const h = promptHistoryRef.current;
     const len = Array.isArray(h) ? h.length : 0;
@@ -167,7 +176,12 @@ const ChatInput = ({
   }, [native]);
 
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setValue(e.target.value);
+    const v = e.target.value;
+    setValue(v);
+    try {
+      if (v.trim()) localStorage.setItem('deiza:composer_draft', v);
+      else localStorage.removeItem('deiza:composer_draft');
+    } catch {}
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -314,10 +328,13 @@ const ChatInput = ({
     setDictPreview(null);
     transcriptionBaseRef.current = '';
     setMicStopSig(s => s + 1);
-    onSend(trimmed, uploadedFiles.length > 0 ? uploadedFiles : undefined);
+    const filesToSend = uploadedFiles.length > 0 ? [...uploadedFiles] : undefined;
     setValue('');
     setUploadedFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    try { localStorage.removeItem('deiza:composer_draft'); } catch {}
+    onSend(trimmed, filesToSend);
     // Keep the keyboard open on desktop for rapid follow-ups
     if (!native && window.matchMedia?.('(pointer: fine)').matches) {
       setTimeout(() => textareaRef.current?.focus(), 0);

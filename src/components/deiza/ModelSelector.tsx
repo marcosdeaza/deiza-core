@@ -2,10 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, Lock, Check } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { liquid5LaunchActive } from '@/lib/launch';
+import { solid5LaunchActive } from '@/lib/launch';
 import { haptic } from '@/lib/native';
 
-export type ModelKey = 'gas' | 'liquid' | 'solid' | 'vainilla' | 'fast' | 'pro' | 'ultra';
+export type ModelKey = 'gas' | 'liquid' | 'solid' | 'fast' | 'pro' | 'ultra';
 
 interface ModelSelectorProps {
   model: ModelKey;
@@ -15,7 +15,7 @@ interface ModelSelectorProps {
   hideFast?: boolean;
 }
 
-type Family = 'gas' | 'liquid' | 'solid' | 'vainilla';
+type Family = 'gas' | 'liquid' | 'solid';
 
 interface ModelMeta {
   key: ModelKey;
@@ -28,29 +28,25 @@ interface ModelMeta {
   isNew?: boolean;
 }
 
-/** Public model lineup — Gas 4.5 · Liquid 5 · Solid 4.6 (+ Liquid 4.5 under "more"). */
+/** Public model lineup — Gas 4.5 · Liquid 5.1 · Solid 5. */
 export const MODELS: ModelMeta[] = [
   {
     key: 'gas', family: 'gas', name: 'Gas', version: '4.5',
     plans: ['free', 'friend', 'signet'],
   },
   {
-    key: 'liquid', family: 'liquid', name: 'Liquid', version: '5',
+    key: 'liquid', family: 'liquid', name: 'Liquid', version: '5.1',
     plans: ['free', 'friend', 'signet'],
-    isNew: true,
   },
   {
-    key: 'solid', family: 'solid', name: 'Solid', version: '4.6',
+    key: 'solid', family: 'solid', name: 'Solid', version: '5',
     plans: ['friend', 'signet'],
-  },
-  {
-    key: 'vainilla', family: 'vainilla', name: 'Vainilla', version: '1.0',
-    plans: ['free', 'friend', 'signet'],
-    legacy: true,
+    isNew: true,
   },
 ];
 
-const LEGACY_ALIASES: Record<string, ModelKey> = { fast: 'gas', pro: 'liquid', ultra: 'solid' };
+// Vainilla was retired; a saved choice of it now opens Gas
+const LEGACY_ALIASES: Record<string, ModelKey> = { fast: 'gas', pro: 'liquid', ultra: 'solid', vainilla: 'gas' };
 
 export const resolveModel = (m: ModelKey): ModelMeta =>
   MODELS.find(x => x.key === (LEGACY_ALIASES[m] || m)) || MODELS[1];
@@ -59,7 +55,6 @@ const FAMILY_DOT: Record<Family, string> = {
   gas: 'bg-amber-400/90',
   liquid: 'bg-primary',
   solid: 'bg-violet-400/90',
-  vainilla: 'bg-amber-200/90',
 };
 
 interface RowProps {
@@ -89,7 +84,7 @@ const ModelRow = ({ m, selected, hasAccess, t, onSelect }: RowProps) => (
         <span className={`font-body text-[13px] font-semibold ${selected ? 'text-foreground' : 'text-foreground/85'}`}>
           {m.name} <span className="font-medium text-foreground/60">{m.version}</span>
         </span>
-        {m.isNew && liquid5LaunchActive() && (
+        {m.isNew && solid5LaunchActive() && (
           <span className="font-body text-[9px] font-semibold uppercase tracking-[0.12em] text-primary/80 border border-primary/30 rounded-full px-1.5 py-[1px] leading-none">
             {t('model.new')}
           </span>
@@ -201,6 +196,7 @@ const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick
               <ModelRow key={m.key} m={m} index={i} selected={m.key === current.key} hasAccess={m.plans.includes(userPlan)} t={t} onSelect={handleSelect} />
             ))}
 
+            {more.length > 0 && (<>
             <button
               type="button"
               onClick={() => setShowMore(v => !v)}
@@ -230,6 +226,7 @@ const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick
                 </motion.div>
               )}
             </AnimatePresence>
+            </>)}
           </motion.div>
         )}
       </AnimatePresence>

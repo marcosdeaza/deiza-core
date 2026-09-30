@@ -15,64 +15,115 @@ import json
 # The "models" list controls which models are allowed at the API level.
 # Fine-grained limits are handled via per-model token limits below.
 
+# usage v2 — honest metering (30-sep-2026).
+# Every request is measured in usage units (UU): input-token equivalents of what it really costs.
+#   fresh input 1.0 · input the provider served from its cache 0.1 · context re-read on engines
+#   that do not cache 0.25 · output and reasoning 5.0
+# Then a per-model multiplier (Gas is cheap, Solid is the most expensive engine). Before this,
+# chat charged only the visible answer (len/4: system prompt, history, files and reasoning were
+# free, hence the "a whole conversation moves the bar 2 %") while Code charged every re-sent
+# context in full.
+UNIT_WEIGHTS = {'input': 1.0, 'cached': 0.1, 'reread': 0.25, 'output': 5.0}
+
+
+def usage_units(prompt=0, completion=0, cached=0, reread=0, reasoning=0) -> int:
+    """UU for one model call. `prompt` includes `cached` and `reread` (as providers report it);
+    `reasoning` is only for providers that report thoughts apart from `completion`."""
+    prompt, cached, reread = max(0, int(prompt or 0)), max(0, int(cached or 0)), max(0, int(reread or 0))
+    cached = min(cached, prompt)
+    reread = min(reread, prompt - cached)
+    fresh = prompt - cached - reread
+    out = max(0, int(completion or 0)) + max(0, int(reasoning or 0))
+    w = UNIT_WEIGHTS
+    return int(round(fresh * w['input'] + cached * w['cached'] + reread * w['reread'] + out * w['output']))
+
+
+# Plans. Limits are UU per 5-hour window (the window starts with the first message, like a rolling window)
+# plus a weekly cap of `weekly_windows` full windows.
+# Calibration (medido en producción, sep-2026): a Liquid chat turn with history ~15-25k UU; a
+# medium Code task (30 agent rounds) ~0.4M UU with Liquid and ~0.6M with Solid (it caches).
+# Friend covers a long afternoon of coding (or ~150 chat turns) per window; Signet ~2.7x that.
 PLANS = {
     'free': {
         'name': 'Free',
         'price_eur': 0,
-        'token_limit': 20000,      # 20k weighted tokens per 4h
-        'models': ['fast', 'pro', 'ultra', 'vainilla', 'code'],
+        'token_limit': 300000,
+        'weekly_windows': 5,
+        'models': ['fast', 'pro', 'ultra', 'code'],
         'reset_hours': 5,
         'projects': 1,
         'project_files': 5,
         'model_token_limits': {
-            'pro': 8000,           # ~1,600 raw pro tokens ≈ 2 pro messages
+            'pro': 150000,
         },
     },
     'friend': {
         'name': 'Friend',
         'price_eur': 4.45,
-        'token_limit': 100000,      # 100k weighted tokens per 4h
-        'models': ['fast', 'pro', 'ultra', 'design', 'code', 'vainilla'],
+        'token_limit': 3000000,
+        'weekly_windows': 8,
+        'models': ['fast', 'pro', 'ultra', 'design', 'code'],
         'reset_hours': 5,
-        'projects': 5,
-        'project_files': 20,
+        'projects': 10,
+        'project_files': 30,
         'model_token_limits': {
-            'ultra': 40000,        # ~8,000 raw ultra tokens ≈ 8 ultra messages per 4h
-            'design': 42000,       # ~7 image designs per 4h on Friend
+            'design': 800000,       # ~20 images or 2-3 video clips per window
         },
     },
     'signet': {
         'name': 'Signet',
         'price_eur': 7.75,
-        'token_limit': 300000,     # 300k weighted tokens per 4h
-        'models': ['fast', 'pro', 'ultra', 'design', 'code', 'vainilla'],
+        'token_limit': 8000000,
+        'weekly_windows': 10,
+        'models': ['fast', 'pro', 'ultra', 'design', 'code'],
         'reset_hours': 5,
-        'projects': 25,
-        'project_files': 50,
-        'model_token_limits': {},   # no per-model sub-limits on signet
+        'projects': 50,
+        'project_files': 100,
+        'model_token_limits': {
+            'design': 2400000,
+        },
     },
 }
 
-# Token cost weights per model per plan
-# Free plan charges extra for pro to naturally limit its use
+# Per-model multiplier on top of the UU (relative cost of each engine). Free pays more for the
+# big models so the free window is mostly Gas.
 MODEL_TOKEN_MULTIPLIER = {
-    'fast':   {'free': 1,  'friend': 1,  'signet': 1},
-    'pro':    {'free': 5,  'friend': 3,  'signet': 2},
-    'ultra':  {'free': 12, 'friend': 5,  'signet': 4},
-    'design': {'free': 0,  'friend': 1,  'signet': 1},
-    'code':   {'free': 3,  'friend': 1,  'signet': 1},
-    'vainilla': {'free': 0, 'friend': 0, 'signet': 0},
+    'fast':   {'free': 0.5, 'friend': 0.35, 'signet': 0.35},
+    'pro':    {'free': 2,   'friend': 1,    'signet': 1},
+    'ultra':  {'free': 4,   'friend': 2,    'signet': 1.8},
+    'design': {'free': 1,   'friend': 1,    'signet': 1},
+    'image':  {'free': 1,   'friend': 1,    'signet': 1},
+    'code':   {'free': 2,   'friend': 1,    'signet': 1},
+    'vainilla': {'free': 0, 'friend': 0,    'signet': 0},
 }
 
-IMAGE_RAW_COST = 6000  # raw tokens charged per generated/edited image
+IMAGE_RAW_COST = 40000     # UU per generated/edited image
+VIDEO_CLIP_COST = 300000   # UU per generated video clip
+
+# Kept for older imports; the cap is per plan now (`weekly_windows`).
+WEEKLY_WINDOWS = 8
+WEEK = timedelta(days=7)
+
+# Courtesy margin ("cortesía"): when the window or the week runs out while the user is working,
+# the work in progress is not cut. Up to GRACE_FRACTION of the window more is served, and the
+# model is told to wrap up: reach a stable point, save or deploy if that was the task, and leave
+# a clean handoff (DEIZA_HANDOFF.md in Code, a Markdown handoff in chat) for the next session.
+GRACE_FRACTION = 0.12
+GRACE_ACTIVE_MINUTES = 15   # "working" = something was charged in the last N minutes
+WARNING_PCT = 85
 
 
-def get_multiplier(model: str, plan: str) -> int:
+def get_multiplier(model: str, plan: str) -> float:
     """Get token multiplier for a model on a given plan."""
     return MODEL_TOKEN_MULTIPLIER.get(model, {}).get(plan, 1)
 
 
-def prune_usage_windows(max_hours: int = 24):
+def weekly_limit_for(plan_key: str) -> int:
+    info = PLANS.get(plan_key, PLANS['free'])
+    return int(info['token_limit'] * info.get('weekly_windows', WEEKLY_WINDOWS))
+
+
+def prune_usage_windows(max_hours: int = 192):
     """Delete usage records older than `max_hours` (rolling windows only ever
     need the most recent `reset_hours`, so anything older is junk)."""
     try:
@@ -169,17 +220,105 @@ class User(db.Model):
         # All previous windows have expired
         return None, [], None
 
+    def get_weekly_usage(self) -> dict:
+        """Weighted tokens in the last 7 days against the weekly cap, and when enough of it ages out."""
+        now = datetime.utcnow()
+        plan_info = PLANS.get(self.get_plan(), PLANS['free'])
+        limit = weekly_limit_for(self.get_plan())
+        records = UsageWindow.query.filter(
+            UsageWindow.user_id == self.id,
+            UsageWindow.created_at >= now - WEEK,
+        ).order_by(UsageWindow.created_at.asc()).all()
+        used = sum(r.weighted_tokens for r in records)
+        reset_at = None
+        if used >= limit:
+            # the cap lifts once the oldest records leave the 7-day span and usage drops below it
+            over = used - limit
+            for r in records:
+                over -= r.weighted_tokens
+                if over < 0:
+                    reset_at = r.created_at + WEEK
+                    break
+        remaining = max(0, limit - used)
+        pct = min(100.0, round((used / limit) * 100, 1)) if limit > 0 else 0
+        return {
+            'used': used,
+            'limit': limit,
+            'remaining': remaining,
+            'pct': pct,
+            'exhausted': used >= limit,
+            'reset_at': reset_at,
+        }
+
     def get_current_usage(self) -> dict:
+        """Usage of the current window and week, plus the courtesy-margin state:
+        state = ok | warning (>= WARNING_PCT) | grace (over the limit, finishing work in progress)
+        | exhausted (over the limit and the courtesy margin spent or not working)."""
+        u = self._base_usage()
+        limit = max(1, int(u.get('token_limit') or 1))
+        pct = min(100.0, round(100.0 * (u.get('tokens_used') or 0) / limit, 1))
+        u['pct'] = pct
+        grace_limit = int(limit * GRACE_FRACTION)
+        grace_used = 0
+        if u.get('weekly_exhausted'):
+            grace_used = max(0, int(u.get('weekly_used', 0)) - int(u.get('weekly_limit', 0)))
+        elif u.get('exhausted'):
+            grace_used = max(0, int(self._window_used_raw) - limit)
+        u['grace_limit'] = grace_limit
+        u['grace_used'] = min(grace_used, grace_limit)
+        u['grace_remaining'] = max(0, grace_limit - grace_used)
+        if not u.get('exhausted'):
+            u['state'] = 'warning' if max(pct, float(u.get('weekly_pct') or 0)) >= WARNING_PCT else 'ok'
+        else:
+            last = UsageWindow.query.filter(UsageWindow.user_id == self.id).order_by(UsageWindow.created_at.desc()).first()
+            working = bool(last and last.created_at >= datetime.utcnow() - timedelta(minutes=GRACE_ACTIVE_MINUTES))
+            u['state'] = 'grace' if (working and u['grace_remaining'] > 0) else 'exhausted'
+        u['grace_active'] = u['state'] == 'grace'
+        return u
+
+    def usage_gate(self) -> tuple:
+        """(allowed, usage). Allowed while under the limit, or in the courtesy margin."""
+        u = self.get_current_usage()
+        return u['state'] != 'exhausted', u
+
+    def _base_usage(self) -> dict:
         """Returns the current usage stats for the user (starts only when user talks)."""
+        self._window_used_raw = 0
         now = datetime.utcnow()
         plan_key = self.get_plan()
         plan_info = PLANS.get(plan_key, PLANS['free'])
         token_limit = plan_info['token_limit']
 
         window_start, windows, next_reset = self.get_active_usage_window()
+        weekly = self.get_weekly_usage()
+        weekly_fields = {
+            'weekly_used': weekly['used'],
+            'weekly_limit': weekly['limit'],
+            'weekly_remaining': weekly.get('remaining', max(0, weekly['limit'] - weekly['used'])),
+            'weekly_pct': weekly.get('pct', 0),
+            'weekly_exhausted': weekly['exhausted'],
+            'weekly_reset_at': weekly['reset_at'].isoformat() + 'Z' if weekly.get('reset_at') else None,
+        }
+
+        if weekly['exhausted'] and weekly['reset_at']:
+            # Weekly cap reached: report it as the limit in force until it lifts
+            reset_in_seconds = max(0, int((weekly['reset_at'] - now).total_seconds()))
+            tokens_used = sum(w.weighted_tokens for w in windows) if window_start else 0
+            return {
+                'tokens_used': max(tokens_used, token_limit),
+                'token_limit': token_limit,
+                'tokens_remaining': 0,
+                'next_reset': weekly['reset_at'].isoformat() + 'Z',
+                'reset_in_seconds': reset_in_seconds,
+                'exhausted': True,
+                'active_window': True,
+                'limit_scope': 'weekly',
+                **weekly_fields,
+            }
 
         if window_start and next_reset:
             tokens_used = sum(w.weighted_tokens for w in windows)
+            self._window_used_raw = tokens_used
             reset_in_seconds = max(0, int((next_reset - now).total_seconds()))
             return {
                 'tokens_used': tokens_used,
@@ -189,6 +328,8 @@ class User(db.Model):
                 'reset_in_seconds': reset_in_seconds,
                 'exhausted': tokens_used >= token_limit,
                 'active_window': True,
+                'limit_scope': 'window',
+                **weekly_fields,
             }
         else:
             return {
@@ -199,6 +340,8 @@ class User(db.Model):
                 'reset_in_seconds': None,
                 'exhausted': False,
                 'active_window': False,
+                'limit_scope': 'window',
+                **weekly_fields,
             }
 
     def can_use_model(self, model_key: str) -> bool:
@@ -208,10 +351,10 @@ class User(db.Model):
         return model_key in plan_info['models']
 
     def record_usage(self, tokens: int, model: str):
-        """Record token usage with plan-aware model multiplier."""
+        """Record usage (UU, see usage_units) with the plan-aware model multiplier."""
         plan_key = self.get_plan()
         multiplier = get_multiplier(model, plan_key)
-        weighted = tokens * multiplier
+        weighted = int(round(tokens * multiplier))
         window = UsageWindow(user_id=self.id, raw_tokens=tokens, weighted_tokens=weighted, model=model)
         db.session.add(window)
 

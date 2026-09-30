@@ -82,6 +82,40 @@ SAFETY_UNRESTRICTED = [
 ]
 
 
+# usage v2: the chat route passes a dict (`usage_sink`) to stream_message; every model call made
+# while that generator runs in its thread adds what the provider reports (prompt, cached,
+# output, reasoning) so the user is charged what the answer really cost.
+_USAGE_TLS = threading.local()
+
+
+def _usage_add(prompt=0, cached=0, output=0, reasoning=0):
+    sink = getattr(_USAGE_TLS, 'sink', None)
+    if sink is None:
+        return
+    for k, v in (('prompt', prompt), ('cached', cached), ('output', output), ('reasoning', reasoning)):
+        try:
+            sink[k] = sink.get(k, 0) + max(0, int(v or 0))
+        except Exception:
+            pass
+    sink['calls'] = sink.get('calls', 0) + 1
+
+
+def _usage_add_meta(meta):
+    """usageMetadata of a model response (the last chunk of a stream carries the totals)."""
+    if not isinstance(meta, dict):
+        return
+    _usage_add(prompt=meta.get('promptTokenCount'), cached=meta.get('cachedContentTokenCount'),
+               output=meta.get('candidatesTokenCount'), reasoning=meta.get('thoughtsTokenCount'))
+
+
+def _usage_add_openai(usage):
+    if not isinstance(usage, dict):
+        return
+    det = usage.get('prompt_tokens_details') or {}
+    _usage_add(prompt=usage.get('prompt_tokens'), cached=det.get('cached_tokens'),
+               output=usage.get('completion_tokens'))
+
+
 def _model_request(model_name: str, action: str, url_env: str = 'MODEL_API_URL') -> tuple:
     """Build (url, headers) for a model call from MODEL_API_URL (or url_env) and MODEL_API_KEY."""
     tpl = os.getenv(url_env, '').strip() or os.getenv('MODEL_API_URL', '').strip()
@@ -411,7 +445,6 @@ class ModelService:
 
         # Per-model generation configs
         self.gen_configs = {
-            'vainilla': {'temperature': 0.3, 'maxOutputTokens': 8192},
             'gas': {
                 'temperature': 0.2,
                 'maxOutputTokens': 16384,
@@ -2223,6 +2256,7 @@ GENERATION RULES:
             req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method='POST')
             with urllib.request.urlopen(req, timeout=60) as resp:
                 d = json.loads(resp.read())
+                _usage_add_meta(d.get('usageMetadata') if isinstance(d, dict) else None)
             parts = d.get('candidates', [{}])[0].get('content', {}).get('parts', [])
             text = ''.join(p.get('text', '') for p in parts if not p.get('thought')).strip()
             start, end = text.find('{'), text.rfind('}')
@@ -2307,6 +2341,7 @@ GENERATION RULES:
             try:
                 with urllib.request.urlopen(req, timeout=150) as resp:
                     d = json.loads(resp.read())
+                    _usage_add_meta(d.get('usageMetadata') if isinstance(d, dict) else None)
                 break
             except urllib.error.HTTPError as he:
                 if he.code in (429, 500, 502, 503, 504) and attempt < 2:
@@ -2490,6 +2525,7 @@ GENERATION RULES:
             req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method='POST')
             with urllib.request.urlopen(req, timeout=30) as resp:
                 d = json.loads(resp.read())
+                _usage_add_meta(d.get('usageMetadata') if isinstance(d, dict) else None)
             parts = d.get('candidates', [{}])[0].get('content', {}).get('parts', [])
             text = ''.join(p.get('text', '') for p in parts if not p.get('thought')).strip()
             start, end = text.find('{'), text.rfind('}')
@@ -2655,7 +2691,9 @@ GENERATION RULES:
             for attempt in range(2):
                 try:
                     with urllib.request.urlopen(req, timeout=timeout) as resp:
-                        return json.loads(resp.read())
+                        _d = json.loads(resp.read())
+                        _usage_add_meta(_d.get('usageMetadata') if isinstance(_d, dict) else None)
+                        return _d
                 except urllib.error.HTTPError as e:
                     err_body = e.read().decode(errors='ignore')
                     if e.code == 400 and 'safety' in err_body.lower() and 'safetySettings' in payload:
@@ -2744,10 +2782,10 @@ GENERATION RULES:
             tier_names = {
                 'gas': ('Deiza Gas 4.5', 'velocidad instantanea, respuestas directas y rapidas'),
                 'fast': ('Deiza Gas 4.5', 'velocidad instantanea, respuestas directas y rapidas'),
-                'liquid': ('Deiza Liquid 5', 'versatilidad, eficiencia y equilibrio en todas las tareas'),
-                'pro': ('Deiza Liquid 5', 'versatilidad, eficiencia y equilibrio en todas las tareas'),
-                'solid': ('Deiza Solid 4.6', 'razonamiento profundo, analisis complejo y arquitectura avanzada'),
-                'ultra': ('Deiza Solid 4.6', 'razonamiento profundo, analisis complejo y arquitectura avanzada'),
+                'liquid': ('Deiza Liquid 5.1', 'versatilidad, eficiencia y equilibrio en todas las tareas'),
+                'pro': ('Deiza Liquid 5.1', 'versatilidad, eficiencia y equilibrio en todas las tareas'),
+                'solid': ('Deiza Solid 5', 'razonamiento profundo y metodico, programacion, investigacion y arquitectura'),
+                'ultra': ('Deiza Solid 5', 'razonamiento profundo y metodico, programacion, investigacion y arquitectura'),
             }
             tier_name, tier_desc = tier_names.get(model_key, tier_names['liquid'])
             system_prompt += (f'\n\n---\n**Modelo activo:** Actualmente estas ejecutandote como **{tier_name}**, '
@@ -2828,7 +2866,186 @@ GENERATION RULES:
             logger.error(f'Error in AI service: {e}', exc_info=True)
             raise Exception(f'Failed to get AI response: {str(e)}')
 
-    def stream_message(
+    # ── Solid 5 ────────────────────────────────────────────────────────────────
+    # Solid 5 answers on its own OpenAI-compatible endpoint. Research
+    # goes through a web_search tool backed by Google Search grounding, so answers keep live sources.
+    def _solid5_search(self, query: str, language: str):
+        """One grounded web search. Returns (text for the model, [source dicts])."""
+        ask = (f'Busca en la web y resume con datos concretos, cifras y fechas: {query}' if language == 'es'
+               else f'Search the web and summarise with concrete facts, figures and dates: {query}')
+        data = self._call_api(self.models['fast'], [{'role': 'user', 'parts': [{'text': ask}]}], use_web=True, timeout=35)
+        cand = (data.get('candidates') or [{}])[0]
+        text = ''.join(p.get('text', '') for p in cand.get('content', {}).get('parts', []) if not p.get('thought')).strip()
+        srcs = []
+        for gc in ((cand.get('groundingMetadata') or {}).get('groundingChunks') or []):
+            web = gc.get('web') or {}
+            uri = web.get('uri', '')
+            if uri and all(s['url'] != uri for s in srcs):
+                title = (web.get('title') or '').strip()
+                domain = (web.get('domain') or '').strip() or (title if '.' in title else 'web')
+                srcs.append({'title': title or domain, 'url': uri, 'domain': domain})
+        if srcs:
+            text += '\n\nFuentes: ' + '; '.join(s['title'] for s in srcs[:6])
+        return (text or 'Sin resultados.'), srcs
+
+    def _solid5_stream(self, system_prompt: str, contents: list, language: str, use_web: bool):
+        """Stream a Solid 5 answer. Yields text plus NUL-framed THINKING / SOURCES events,
+        the same protocol as the Model stream."""
+        import requests as _rq
+        global _solid5_cooldown_until
+        import time
+        if time.time() < getattr(self, '_solid5_cooldown', 0.0):
+            raise RuntimeError('Solid 5 in cooldown')
+        url = os.getenv('SOLID_API_URL', '')
+        key = os.getenv('SOLID_API_KEY', '')
+        model = os.getenv('CODE_MODEL_SOLID', '')
+        NUL = chr(0)
+        es = language == 'es'
+        if use_web:
+            system_prompt += ('\n\n---\nTienes la herramienta web_search. Usala cuando el dato pueda haber cambiado, '
+                              'sea reciente o no lo sepas con certeza; haz varias busquedas concretas si hace falta (maximo 4) '
+                              'y contrasta. No la uses para saludos, codigo o preguntas que ya sabes. No menciones la herramienta.')
+        msgs = [{'role': 'system', 'content': system_prompt}]
+        for c in contents:
+            role = 'user' if c.get('role') == 'user' else 'assistant'
+            texts, imgs = [], []
+            for p in c.get('parts', []):
+                if p.get('text'):
+                    texts.append(p['text'])
+                d = p.get('inline_data') or p.get('inlineData')
+                if d and d.get('data') and role == 'user':
+                    mime = d.get('mime_type') or d.get('mimeType') or 'image/png'
+                    imgs.append({'type': 'image_url', 'image_url': {'url': f"data:{mime};base64,{d['data']}"}})
+            text = '\n'.join(texts).strip()
+            if not text and not imgs:
+                continue
+            content = ([{'type': 'text', 'text': text or '...'}] + imgs) if imgs else text
+            if msgs[-1]['role'] == role and isinstance(msgs[-1]['content'], str) and isinstance(content, str):
+                msgs[-1]['content'] += '\n\n' + content
+            else:
+                msgs.append({'role': role, 'content': content})
+        tools = [{'type': 'function', 'function': {
+            'name': 'web_search',
+            'description': 'Search the web for current, verifiable information. Returns a summary with sources.',
+            'parameters': {'type': 'object', 'properties': {'query': {'type': 'string', 'description': 'Specific search query'}},
+                           'required': ['query']}}}]
+        headers = {'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'}
+        sources = []
+        steps = (['Analizando la petición', 'Razonando paso a paso', 'Comprobando el razonamiento']
+                 if es else ['Analysing the request', 'Reasoning step by step', 'Checking the reasoning'])
+        step_at = [0, 400, 2500]          # reasoning characters before each step shows
+        shown = 0
+        reasoned = 0
+        wrote = False
+        for rnd in range(5):
+            body = {'model': model, 'messages': msgs, 'max_tokens': 32000, 'stream': True,
+                    'stream_options': {'include_usage': True}, 'reasoning_effort': 'high'}
+            if use_web and rnd < 4:
+                body['tools'] = tools
+            resp = None
+            for attempt in range(3):
+                try:
+                    resp = _rq.post(url, headers=headers, json=body, stream=True, timeout=(20, 300))
+                except Exception as e:
+                    logger.warning(f'Solid 5 unreachable (attempt {attempt + 1}): {e}')
+                    resp = None
+                    time.sleep(1.0 + attempt)
+                    continue
+                if resp.status_code == 200:
+                    break
+                err = resp.text[:300]
+                logger.warning(f'Solid 5 HTTP {resp.status_code} (attempt {attempt + 1}): {err}')
+                if resp.status_code == 429:
+                    self._solid5_cooldown = time.time() + 60.0
+                    raise RuntimeError('Solid 5 HTTP 429 rate limited')
+                if resp.status_code not in (408, 500, 502, 503, 504):
+                    raise RuntimeError(f'Solid 5 HTTP {resp.status_code}')
+                resp = None
+                time.sleep(1.0 + attempt)
+            if resp is None:
+                raise RuntimeError('Solid 5 unavailable')
+            resp.encoding = 'utf-8'
+            calls, reasoning, content = {}, '', ''
+            for line in resp.iter_lines(decode_unicode=True):
+                if not line or not line.startswith('data:'):
+                    continue
+                raw = line[5:].strip()
+                if raw == '[DONE]':
+                    break
+                try:
+                    _obj = json.loads(raw)
+                    if _obj.get('usage'):
+                        _usage_add_openai(_obj['usage'])
+                    ch = (_obj.get('choices') or [{}])[0]
+                except Exception:
+                    continue
+                delta = ch.get('delta') or {}
+                r = delta.get('reasoning_content') or delta.get('reasoning') or ''
+                if r:
+                    # The raw reasoning is not shown (it is not in the user's language); a few
+                    # localized progress steps are, as it grows
+                    reasoning += r
+                    reasoned += len(r)
+                    while shown < len(steps) and reasoned >= step_at[shown]:
+                        yield NUL + 'THINKING:' + steps[shown] + NUL
+                        shown += 1
+                c = delta.get('content') or ''
+                if c:
+                    if wrote and not content:
+                        yield '\n\n'          # text before a search and the answer after it
+                    content += c
+                    wrote = True
+                    yield c
+                for tc in (delta.get('tool_calls') or []):
+                    slot = calls.setdefault(tc.get('index', 0), {'id': '', 'name': '', 'args': ''})
+                    slot['id'] = tc.get('id') or slot['id']
+                    fn = tc.get('function') or {}
+                    slot['name'] = fn.get('name') or slot['name']
+                    slot['args'] += fn.get('arguments') or ''
+            if not calls:
+                return
+            assistant = {'role': 'assistant', 'content': content or None,
+                         'tool_calls': [{'id': c['id'] or f'call_{i}', 'type': 'function',
+                                         'function': {'name': c['name'], 'arguments': c['args'] or '{}'}}
+                                        for i, c in sorted(calls.items())]}
+            if reasoning:
+                assistant['reasoning_content'] = reasoning
+            msgs.append(assistant)
+            for tcall in assistant['tool_calls']:
+                try:
+                    q = str(json.loads(tcall['function']['arguments']).get('query') or '').strip()
+                except Exception:
+                    q = ''
+                if tcall['function']['name'] != 'web_search' or not q:
+                    msgs.append({'role': 'tool', 'tool_call_id': tcall['id'], 'content': 'Herramienta no disponible.'})
+                    continue
+                yield NUL + 'THINKING:' + (('Buscando en la web: ' if es else 'Searching the web: ') + q)[:160] + NUL
+                try:
+                    result, srcs = self._solid5_search(q, language)
+                except Exception as se:
+                    logger.warning(f'Solid 5 web search failed: {se}')
+                    result, srcs = 'La busqueda fallo; responde con lo que sepas y dilo.', []
+                for sx in srcs:
+                    if all(sx['url'] != o['url'] for o in sources):
+                        sources.append(sx)
+                if srcs:
+                    yield NUL + 'SOURCES:' + json.dumps(sources[:8], ensure_ascii=False) + NUL
+                msgs.append({'role': 'tool', 'tool_call_id': tcall['id'], 'content': result[:12000]})
+
+    def stream_message(self, *args, usage_sink=None, **kwargs):
+        """stream_message with metering: when `usage_sink` (a dict) is given, the provider-reported
+        usage of every model call made while generating is added to it (see _usage_add)."""
+        if usage_sink is None:
+            yield from self._stream_message_impl(*args, **kwargs)
+            return
+        prev = getattr(_USAGE_TLS, 'sink', None)
+        _USAGE_TLS.sink = usage_sink
+        try:
+            yield from self._stream_message_impl(*args, **kwargs)
+        finally:
+            _USAGE_TLS.sink = prev
+
+    def _stream_message_impl(
         self,
         message: str,
         history: List[Any] = None,
@@ -2847,83 +3064,6 @@ GENERATION RULES:
         import urllib.error
 
         model_key = model if model in self.models else 'fast'
-        if model_key == 'vainilla':
-            # Vainilla is purely conversational: clean, direct, no media attachments or complex tools.
-            # Small chat models often demand strict user/assistant alternation: the
-            # stored history already ends with the current user turn, so a naive
-            # history + message sent the same user turn twice and the provider answered 400.
-            def _vainilla_messages():
-                sys_msg = (
-                    "Eres Vainilla, el modelo de IA conversacional ligero de Deiza (creado por Marcos de Aza, ingeniero de DeizaLab). "
-                    "Sé claro, directo, útil y amable. Responde con sobriedad, concisión y precisión. "
-                    "No uses emojis."
-                ) if language == 'es' else (
-                    "You are Vanilla, Deiza's lightweight conversational AI model. "
-                    "Be helpful, clear, direct and kind. Answer concisely and accurately. Do not use emojis."
-                )
-                turns = []
-                for m in (history or [])[-12:]:
-                    r = m.get('role') if isinstance(m, dict) else getattr(m, 'role', 'user')
-                    c = m.get('content') if isinstance(m, dict) else getattr(m, 'content', '')
-                    c = str(c or '').strip()
-                    if not c:
-                        continue
-                    role = 'assistant' if r in ('ai', 'assistant', 'model') else 'user'
-                    if turns and turns[-1]['role'] == role:
-                        turns[-1]['content'] += '\n\n' + c[:6000]
-                    else:
-                        turns.append({'role': role, 'content': c[:6000]})
-                current = str(message or '').strip()
-                if turns and turns[-1]['role'] == 'user':
-                    last = turns.pop()
-                    if last['content'].strip() != current:
-                        current = f"{last['content']}\n\n{current}" if current else last['content']
-                while turns and turns[0]['role'] != 'user':
-                    turns.pop(0)
-                return [{'role': 'system', 'content': sys_msg}] + turns + [{'role': 'user', 'content': current or '...'}]
-
-            def _vainilla_stream():
-                import requests as _rq
-                _url = os.getenv('CODE_API_URL', '')
-                _key = os.getenv('CODE_API_KEY', '')
-                _resp = _rq.post(_url, headers={'Authorization': f'Bearer {_key}', 'Content-Type': 'application/json'},
-                                 json={'model': os.getenv('CODE_MODEL_VAINILLA', '') or self.models['vainilla'],
-                                       'messages': _vainilla_messages(), 'max_tokens': 2048, 'temperature': 0.3, 'stream': True},
-                                 stream=True, timeout=30)
-                if _resp.status_code != 200:
-                    raise RuntimeError(f'Vainilla provider {_resp.status_code}: {_resp.text[:300]}')
-                _resp.encoding = 'utf-8'
-                for line in _resp.iter_lines(decode_unicode=True):
-                    if not line:
-                        continue
-                    d = line.strip()
-                    if not d.startswith('data:'):
-                        continue
-                    txt = d[5:].strip()
-                    if txt == '[DONE]':
-                        break
-                    try:
-                        delta = json.loads(txt)['choices'][0]['delta'].get('content', '')
-                    except Exception:
-                        continue
-                    if delta:
-                        yield delta
-
-            _sent_any = False
-            try:
-                for _piece in _vainilla_stream():
-                    _sent_any = True
-                    yield _piece
-                if _sent_any:
-                    return
-                logger.warning('Vainilla returned an empty answer; falling back to the fast model')
-            except Exception as _ve:
-                if _sent_any:
-                    raise
-                logger.error(f'Vainilla failed, falling back to the fast model: {_ve}')
-            if not fallback:
-                return
-            model_key = 'fast'
         model_key = self._auto_upgrade_for_images(model_key, files)
         model_name = self.models[model_key]
         variant = variant if variant in self.variants else None
@@ -2958,10 +3098,10 @@ GENERATION RULES:
         tier_names = {
             'gas': ('Deiza Gas 4.5', 'velocidad instantanea, respuestas directas y rapidas'),
             'fast': ('Deiza Gas 4.5', 'velocidad instantanea, respuestas directas y rapidas'),
-            'liquid': ('Deiza Liquid 5', 'versatilidad, eficiencia y equilibrio en todas las tareas'),
-            'pro': ('Deiza Liquid 5', 'versatilidad, eficiencia y equilibrio en todas las tareas'),
-            'solid': ('Deiza Solid 4.6', 'razonamiento profundo, analisis complejo y arquitectura avanzada'),
-            'ultra': ('Deiza Solid 4.6', 'razonamiento profundo, analisis complejo y arquitectura avanzada'),
+            'liquid': ('Deiza Liquid 5.1', 'versatilidad, eficiencia y equilibrio en todas las tareas'),
+            'pro': ('Deiza Liquid 5.1', 'versatilidad, eficiencia y equilibrio en todas las tareas'),
+            'solid': ('Deiza Solid 5', 'razonamiento profundo y metodico, programacion, investigacion y arquitectura'),
+            'ultra': ('Deiza Solid 5', 'razonamiento profundo y metodico, programacion, investigacion y arquitectura'),
         }
         tier_name, tier_desc = tier_names.get(model_key, tier_names['liquid'])
         if variant == 'liquid45':
@@ -2971,7 +3111,7 @@ GENERATION RULES:
                           f'especializado en {tier_desc}. REGLA DE IDENTIDAD: eres {tier_name} (familia {family}). '
                           f'JAMAS digas que eres otro nivel o version. Cuando te pregunten que modelo eres, responde: '
                           f'"Soy {tier_name}, el nivel de {tier_desc} de la arquitectura multicapa Deiza, desarrollada por DeizaLab." '
-                          f'La gama actual de Deiza es: Gas 4.5, Liquid 5 (y Liquid 4.5, generacion anterior) y Solid 4.6.')
+                          f'La gama actual de Deiza es: Gas 4.5, Liquid 5.1 (y Liquid 4.5, generacion anterior) y Solid 5, el modelo mas capaz de Deiza.')
         
         if model_key in ('gas', 'fast'):
             system_prompt += ('\n\n---\n**ESTILO GAS - REGLAS DE RESPUESTA:**\n'
@@ -2983,7 +3123,21 @@ GENERATION RULES:
                               '- Responde en el idioma del usuario.\n'
                               '- Sin emojis.\n'
                               '- Solo alarga la respuesta si el usuario lo pide o la tarea lo exige (explicacion detallada, codigo largo).')
-        
+        elif model_key in ('solid', 'ultra'):
+            system_prompt += ('\n\n---\n**ESTILO SOLID 5 - COMO TRABAJAS:**\n'
+                              '- Eres metodico. Antes de responder algo no trivial, entiende el problema entero: que se pide, '
+                              'que restricciones hay y que podria salir mal.\n'
+                              '- Programacion: lee el codigo con atencion, razona la causa real antes de proponer cambios, escribe '
+                              'codigo completo y correcto a la primera, y senala casos limite, riesgos y como verificarlo.\n'
+                              '- Investigacion: busca en la web cuando el dato pueda haber cambiado o no lo sepas con certeza, '
+                              'contrasta varias fuentes, da fechas y distingue lo verificado de lo que es estimacion.\n'
+                              '- Precision antes que volumen: nada de relleno, introducciones ni resumenes que repiten. '
+                              'Estructura con encabezados y listas solo cuando la respuesta es larga.\n'
+                              '- Si algo es incierto, dilo con claridad; nunca inventes datos, citas, URLs ni resultados.\n'
+                              '- Si la peticion es ambigua y la ambiguedad cambia el resultado, pregunta; si no, asume lo razonable '
+                              'y dilo en una linea.\n'
+                              '- Sin emojis.')
+
         if custom_instructions:
             system_prompt += ('\n\n---\n**Instrucciones personalizadas del usuario (siguelas siempre que no '
                               'contradigan tu identidad ni las reglas anteriores):**\n' + custom_instructions.strip()[:2000])
@@ -3238,7 +3392,7 @@ GENERATION RULES:
                 self.gen_configs[model_key].pop('thinkingConfig', None)
         gen_config = dict(self.gen_configs.get(model_key, self.gen_configs['fast']))
         # Adaptive thinking: Gas = 0 thinking; Solid = deep reasoning; Liquid = adaptive
-        if model_key in ('gas', 'fast', 'vainilla'):
+        if model_key in ('gas', 'fast'):
             gen_config.pop('thinkingConfig', None)
         elif model_key in ('solid', 'ultra'):
             gen_config['thinkingConfig'] = {'thinkingLevel': 'high', 'includeThoughts': True}
@@ -3265,6 +3419,23 @@ GENERATION RULES:
             'tools': ([{'googleSearch': {}}] if not re.search(r'^(hola|buenas|hey|hi|hello|gracias|adios)\b|```|\b(def |class |import |function|const |let |var |return |SELECT |SELECT\b|INSERT\b|UPDATE\b)\b', (message or '').strip(), re.I) else []),
             'safetySettings': SAFETY_UNRESTRICTED,
         }
+
+        # Solid 5: its own engine. Everything above (photos, research, decks, the prompt) is shared;
+        # only the generation changes. If it cannot answer, the model chain below takes over.
+        if model_key in ('solid', 'ultra') and os.getenv('SOLID_API_KEY'):
+            _s5_text = False
+            try:
+                for _piece in self._solid5_stream(system_prompt, contents, language, bool(payload['tools'])):
+                    if not _piece.startswith(chr(0)):
+                        _s5_text = True
+                    yield _piece
+                if _s5_text:
+                    return
+                logger.warning('Solid 5 returned no text; falling back to the model chain')
+            except Exception as _s5e:
+                if _s5_text:
+                    raise
+                logger.error(f'Solid 5 failed before answering; falling back to the model chain: {_s5e}')
 
         chain = [model_name]
         if fallback:
@@ -3337,6 +3508,7 @@ GENERATION RULES:
             sources_emitted = 0
             queries_seen = set()
             thought_buf = ''
+            _last_usage_meta = None
             try:
                 with resp:
                     # Once the first bytes arrived, allow long silences (thinking bursts)
@@ -3355,6 +3527,8 @@ GENERATION RULES:
                             data = json.loads(data_str)
                         except json.JSONDecodeError:
                             continue
+                        if data.get('usageMetadata'):
+                            _last_usage_meta = data['usageMetadata']
                         cand = data.get('candidates', [{}])[0]
                         parts_list = cand.get('content', {}).get('parts', [])
                         for part in parts_list:
@@ -3398,8 +3572,14 @@ GENERATION RULES:
                     tail = thought_buf.strip().strip('#*-: ').strip()
                     if tail and len(tail) > 3:
                         yield NUL + 'THINKING:' + tail[:160] + NUL
+                _usage_add_meta(_last_usage_meta)
                 return
+            except GeneratorExit:
+                _usage_add_meta(_last_usage_meta)
+                raise
             except (TimeoutError, _socket.timeout, OSError) as e0:
+                _usage_add_meta(_last_usage_meta)
+                _last_usage_meta = None
                 last_err = Exception(f'Model stream stalled: {e0}')
                 if not yielded_any and has_next:
                     logger.warning(f'{target} stalled before first token — chain fallback to {chain[idx + 1]}')

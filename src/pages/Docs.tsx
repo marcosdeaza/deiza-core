@@ -108,7 +108,7 @@ const Docs = () => {
   -H "Authorization: Bearer $DEIZA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "deiza-liquid-5",
+    "model": "deiza-liquid-5.1",
     "messages": [
       {"role": "system", "content": "${es ? 'Responde en español, breve y directo.' : 'Answer briefly and directly.'}"},
       {"role": "user", "content": "${es ? '¿Qué es un transformer? En tres frases.' : 'What is a transformer? Three sentences.'}"}
@@ -123,7 +123,7 @@ client = OpenAI(
 )
 
 resp = client.chat.completions.create(
-    model="deiza-liquid-5",
+    model="deiza-liquid-5.1",
     messages=[{"role": "user", "content": "${es ? 'Resume la teoría de la relatividad en 5 líneas.' : 'Summarise relativity in 5 lines.'}"}],
 )
 print(resp.choices[0].message.content)`;
@@ -136,7 +136,7 @@ const client = new OpenAI({
 });
 
 const stream = await client.chat.completions.create({
-  model: "deiza-liquid-5",
+  model: "deiza-liquid-5.1",
   stream: true,
   messages: [{ role: "user", content: "${es ? 'Dame 3 ideas de nombre para una cafetería.' : 'Give me 3 name ideas for a café.'}" }],
 });
@@ -145,10 +145,10 @@ for await (const chunk of stream) {
   process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
 }`;
 
-  const sse = `data: {"id":"chatcmpl-1757600000","object":"chat.completion.chunk","model":"deiza-liquid-5",
+  const sse = `data: {"id":"chatcmpl-1757600000","object":"chat.completion.chunk","model":"deiza-liquid-5.1",
        "choices":[{"index":0,"delta":{"content":"Un transformer "},"finish_reason":null}]}
 
-data: {"id":"chatcmpl-1757600000","object":"chat.completion.chunk","model":"deiza-liquid-5",
+data: {"id":"chatcmpl-1757600000","object":"chat.completion.chunk","model":"deiza-liquid-5.1",
        "choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 
 data: [DONE]`;
@@ -165,9 +165,9 @@ data: [DONE]`;
 }`;
 
   const models = [
-    ['deiza-liquid-5', 'Liquid 5', es ? 'Equilibrado y agéntico, con búsqueda web. El modelo por defecto.' : 'Balanced and agentic, with web search. The default.', es ? 'Todos' : 'All'],
-    ['deiza-gas-4.1', 'Gas 4.5', es ? 'Respuestas instantáneas para tareas ligeras.' : 'Instant answers for light tasks.', es ? 'Todos' : 'All'],
-    ['deiza-solid-4.5', 'Solid 4.6', es ? 'Razonamiento profundo para análisis complejos.' : 'Deep reasoning for complex analysis.', 'Friend · Signet'],
+    ['deiza-liquid-5.1', 'Liquid 5.1', es ? 'Equilibrado y agéntico, con búsqueda web. El modelo por defecto.' : 'Balanced and agentic, with web search. The default.', es ? 'Todos' : 'All'],
+    ['deiza-gas-4.5', 'Gas 4.5', es ? 'Respuestas instantáneas para tareas ligeras.' : 'Instant answers for light tasks.', es ? 'Todos' : 'All'],
+    ['deiza-solid-5', 'Solid 5', es ? 'Razonamiento profundo para análisis complejos.' : 'Deep reasoning for complex analysis.', 'Friend · Signet'],
     ['deiza-liquid-4.5', 'Liquid 4.5', es ? 'Generación anterior de Liquid.' : 'Previous Liquid generation.', es ? 'Todos' : 'All'],
   ];
 
@@ -224,8 +224,8 @@ data: [DONE]`;
             ? 'Todo pasa por https://deiza.org/api/code. Cada petición se autentica con una clave ligada a tu cuenta y consume tokens de tu plan, igual que una conversación en el chat. No hay tarjeta aparte ni facturación separada: la API es tu plan Deiza desde fuera de la interfaz.'
             : 'Everything goes through https://deiza.org/api/code. Each request is authenticated with a key tied to your account and spends tokens from your plan, exactly like a chat conversation. No separate card or billing: the API is your Deiza plan outside the interface.'}</p>
           <p>{es
-            ? 'Los modelos que ves en el composer (Gas 4.5, Liquid 5, Solid 4.6) son los mismos que respondes aquí, con la misma búsqueda web integrada y el mismo respaldo por cadena.'
-            : 'The models you see in the composer (Gas 4.5, Liquid 5, Solid 4.6) are the same ones answering here, with the same built-in web search and chain fallback.'}</p>
+            ? 'Los modelos que ves en el composer (Gas 4.5, Liquid 5.1, Solid 5) son los mismos que respondes aquí, con la misma búsqueda web integrada y el mismo respaldo por cadena.'
+            : 'The models you see in the composer (Gas 4.5, Liquid 5.1, Solid 5) are the same ones answering here, with the same built-in web search and chain fallback.'}</p>
         </Section>
 
         <Section id="auth" kicker={es ? 'Paso 1' : 'Step 1'} title={es ? 'Autenticación' : 'Authentication'} art={<SketchKey />}>
@@ -271,7 +271,7 @@ data: [DONE]`;
           <Code lang="json" code={`{
   "id": "chatcmpl-1757600000",
   "object": "chat.completion",
-  "model": "deiza-liquid-5",
+  "model": "deiza-liquid-5.1",
   "choices": [{ "index": 0, "message": { "role": "assistant", "content": "..." }, "finish_reason": "stop" }],
   "usage": { "prompt_tokens": 18, "completion_tokens": 96, "total_tokens": 114 }
 }`} />
@@ -312,7 +312,7 @@ data: [DONE]`;
           <p>{es
             ? 'Cualquier cliente compatible con el formato de OpenAI (Cursor, Continue, Open WebUI, LibreChat, tu propio agente…) funciona con Deiza cambiando solo la URL base, la clave y el modelo.'
             : 'Any OpenAI-format compatible client (Cursor, Continue, Open WebUI, LibreChat, your own agent…) works with Deiza by changing only the base URL, the key and the model.'}</p>
-          <Code lang="env" code={`OPENAI_BASE_URL=${BASE}\nOPENAI_API_KEY=pm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nOPENAI_MODEL=deiza-liquid-5`} />
+          <Code lang="env" code={`OPENAI_BASE_URL=${BASE}\nOPENAI_API_KEY=pm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nOPENAI_MODEL=deiza-liquid-5.1`} />
         </Section>
 
         <p className="mt-16 font-body text-[12px] text-muted-foreground/45 text-center">DeizaLab · API v1 · {new Date().getFullYear()}</p>

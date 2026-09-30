@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ChevronDown } from 'lucide-react';
@@ -6,6 +6,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import AmbientRose from '@/components/deiza/AmbientRose';
 import logo from '@/assets/logo.png';
 import { NEWS, type NewsArt } from '@/data/news';
+import { solid5LaunchActive } from '@/lib/launch';
 import {
   SketchDrop, SketchRose, SketchLayers, SketchCode, SketchImage, SketchSearch, SketchEye, SketchLink, SketchChat,
 } from '@/components/deiza/Sketch';
@@ -35,7 +36,7 @@ const News = () => {
   useEffect(() => { document.body.style.overflow = ''; window.scrollTo(0, 0); }, []);
 
   const items = useMemo(() => [...NEWS].sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : Number(!!a.upcoming) - Number(!!b.upcoming))), []);
-  const featured = items.find(n => n.id === 'liquid-5') || items[0];
+  const featured = items.find(n => n.id === 'solid-5') || items[0];
 
   return (
     <div className="min-h-dvh bg-background">
@@ -68,11 +69,13 @@ const News = () => {
           </h1>
           <p className="font-body text-[15px] sm:text-base text-muted-foreground mt-4 max-w-xl leading-relaxed">
             {es
-              ? 'Modelos, arquitectura y decisiones de producto desde el primer DZ-4F hasta Liquid 5.'
-              : 'Models, architecture and product decisions from the first DZ-4F to Liquid 5.'}
+              ? 'Modelos, arquitectura y decisiones de producto desde el primer DZ-4F hasta Solid 5.'
+              : 'Models, architecture and product decisions from the first DZ-4F to Solid 5.'}
           </p>
           <div className="mt-8 rounded-[28px] overflow-hidden border border-border/30 deiza-shadow-lg bg-card">
-            <img src="/art/news-hero.webp" alt="" className="w-full aspect-[16/9] object-cover" loading="eager" />
+            {solid5LaunchActive()
+              ? <img src="/art/solid5-mural.webp" alt="" className="w-full aspect-[21/9] object-cover" loading="eager" />
+              : <img src="/art/news-hero.webp" alt="" className="w-full aspect-[16/9] object-cover" loading="eager" />}
           </div>
         </motion.section>
 
@@ -135,8 +138,26 @@ const News = () => {
                               <Art className="w-full h-auto" />
                             </div>
                             <div className="prose-deiza font-body text-[15px] leading-[1.8] max-w-prose">
-                              {n.body[L].map((p, k) => <p key={k}>{p}</p>)}
+                              {n.body[L].map((p, k) => (
+                                <Fragment key={k}>
+                                  <p>{p}</p>
+                                  {n.mural && k === n.mural.after && (
+                                    <figure className="not-prose my-8 -mx-4 sm:-mx-5">
+                                      <img src={n.mural.src} alt="" className="w-full aspect-[21/9] object-cover" loading="lazy" />
+                                      <figcaption className="px-4 sm:px-5 mt-2.5 font-display italic text-[13px] text-muted-foreground/70">{n.mural.caption[L]}</figcaption>
+                                    </figure>
+                                  )}
+                                </Fragment>
+                              ))}
                             </div>
+                            {n.id === 'solid-5' && (
+                              <button
+                                onClick={() => navigate('/workspace?model=solid')}
+                                className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-primary-foreground font-body text-sm font-medium hover:brightness-110 transition focus-ring"
+                              >
+                                {es ? 'Probar Solid 5' : 'Try Solid 5'}
+                              </button>
+                            )}
                             {n.id === 'liquid-5' && (
                               <button
                                 onClick={() => navigate('/workspace?model=liquid')}

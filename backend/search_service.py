@@ -12,6 +12,128 @@ from ai_service import get_ai_service
 
 logger = logging.getLogger("deiza.search")
 
+import os
+import requests as _rq_code
+import hashlib
+import redis
+
+# the model endpoint config for Gas 4.5 & Liquid
+CODE_API_URL = os.getenv("CODE_API_URL", "")
+CODE_API_KEY = os.getenv("CODE_API_KEY", "")
+CODE_MODEL_GAS = os.getenv("CODE_MODEL_GAS", "")
+CODE_MODEL_LIQUID = os.getenv("CODE_MODEL_LIQUID", "")
+
+def _get_redis():
+    try:
+        r_host = os.environ.get("REDIS_HOST", "redis")
+        r_port = int(os.environ.get("REDIS_PORT", 6379))
+        return redis.Redis(host=r_host, port=r_port, db=0, socket_timeout=1.5)
+    except Exception:
+        return None
+
+def _get_cached_search(query: str, custom_urls: list, language: str):
+    r = _get_redis()
+    if not r:
+        return None
+    try:
+        norm = (query or "").strip().lower()
+        key_raw = f"{norm}:{sorted(custom_urls or [])}:{language}"
+        h = hashlib.sha256(key_raw.encode("utf-8")).hexdigest()[:24]
+        data = r.get(f"deiza:search:v2:{h}")
+        if data:
+            return json.loads(data.decode("utf-8"))
+    except Exception as e:
+        logger.debug(f"Redis cache get failed: {e}")
+    return None
+
+def _set_cached_search(query: str, custom_urls: list, language: str, result: dict, ttl: int = 3600):
+    r = _get_redis()
+    if not r or not result:
+        return
+    try:
+        norm = (query or "").strip().lower()
+        key_raw = f"{norm}:{sorted(custom_urls or [])}:{language}"
+        h = hashlib.sha256(key_raw.encode("utf-8")).hexdigest()[:24]
+        if result.get("ai_overview") or result.get("direct_link"):
+            r.setex(f"deiza:search:v2:{h}", ttl, json.dumps(result))
+    except Exception as e:
+        logger.debug(f"Redis cache set failed: {e}")
+
+def _call_code_gas(messages, system=None, max_tokens=1500, temperature=0.2, timeout=18):
+    """Call Gas 4.5 on the model endpoint. Ultra-fast, deep reasoning."""
+    if not CODE_API_KEY:
+        return ""
+    payload_msgs = []
+    if system:
+        payload_msgs.append({"role": "system", "content": system})
+    payload_msgs.extend(messages)
+    payload = {
+        "model": CODE_MODEL_GAS,
+        "messages": payload_msgs,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    headers = {
+        "Authorization": f"Bearer {CODE_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        resp = _rq_code.post(CODE_API_URL, headers=headers, json=payload, timeout=timeout)
+        if resp.status_code == 200:
+            data = resp.json()
+            choice = (data.get("choices") or [{}])[0]
+            content = choice.get("message", {}).get("content") or ""
+            return content.strip()
+        logger.warning(f"Endpoint Gas 4.5 returned HTTP {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        logger.warning(f"Endpoint Gas 4.5 error: {e}")
+    return ""
+
+def _call_code_liquid_vision(files, query, system, timeout=22):
+    """Vision path with Liquid via the endpoint."""
+    if not CODE_API_KEY:
+        return ""
+    contents = []
+    if query:
+        contents.append({"type": "text", "text": query})
+    for f in (files or []):
+        if f.get("is_image") or (f.get("mime_type") or "").startswith("image/"):
+            raw = f.get("raw_bytes")
+            mime = f.get("mime_type") or "image/png"
+            if raw:
+                contents.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{raw}"}})
+        elif f.get("content"):
+            contents.append({"type": "text", "text": f.get("content")[:2500]})
+    if not contents:
+        contents.append({"type": "text", "text": "Describe las imagenes adjuntas"})
+
+    payload_msgs = []
+    if system:
+        payload_msgs.append({"role": "system", "content": system})
+    payload_msgs.append({"role": "user", "content": contents})
+
+    payload = {
+        "model": CODE_MODEL_LIQUID,
+        "messages": payload_msgs,
+        "max_tokens": 1024,
+        "temperature": 0.2,
+    }
+    headers = {
+        "Authorization": f"Bearer {CODE_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        resp = _rq_code.post(CODE_API_URL, headers=headers, json=payload, timeout=timeout)
+        if resp.status_code == 200:
+            data = resp.json()
+            choice = (data.get("choices") or [{}])[0]
+            content = choice.get("message", {}).get("content") or ""
+            return content.strip()
+        logger.warning(f"Endpoint Liquid vision returned HTTP {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        logger.warning(f"Endpoint Liquid vision error: {e}")
+    return ""
+
 FETCH_TIMEOUT = 8
 
 DIRECT_DOMAINS = {
@@ -404,11 +526,11 @@ def _grounding_search(query, custom_urls, language, history=None, use_web=True, 
     data = ai._call_api(model_name, contents, system, use_web=use_web, timeout=timeout)
 
     sources = []
-    overview = ""
+    model_overview = ""
     try:
         candidate = data["candidates"][0]
         parts = candidate["content"]["parts"]
-        overview = "".join(p.get("text", "") for p in parts)
+        model_overview = "".join(p.get("text", "") for p in parts)
         grounding = candidate.get("groundingMetadata") or {}
         for chunk in grounding.get("groundingChunks") or []:
             web = chunk.get("web") or {}
@@ -418,9 +540,38 @@ def _grounding_search(query, custom_urls, language, history=None, use_web=True, 
     except Exception as e:
         logger.warning("Grounding parse failed: %s", e)
 
-    dedup = _normalize_grounding_sources(sources[:10])
+    dedup = _normalize_grounding_sources(sources[:12])
 
-    overview = clean_text(overview)
+    # Prioritize indexed sites (custom_urls)
+    if custom_urls:
+        def _is_custom(s):
+            dom = (s.get("domain") or "").lower()
+            return any(c.lower() in dom for c in custom_urls)
+        custom_srcs = [s for s in dedup if _is_custom(s)]
+        other_srcs = [s for s in dedup if not _is_custom(s)]
+        for s in custom_srcs:
+            s["is_indexed"] = True
+        dedup = custom_srcs + other_srcs
+
+    # Gas 4.5 synthesis: ultra-fast, high IQ
+    overview = ""
+    sources_summary = "\n".join([f"- {s.get('title', '')} ({s.get('url', '')})" for s in dedup[:6]])
+    gas_prompt = f"Consulta: {query}\n\nFuentes web verificadas:\n{sources_summary}\n\nInformación preliminar:\n{model_overview[:1500]}"
+    if custom_urls:
+        gas_prompt += "\n\nSitios indexados prioritarios por el usuario: " + ", ".join(custom_urls)
+
+    gas_overview = _call_code_gas(
+        [{"role": "user", "content": gas_prompt}],
+        system=system,
+        max_tokens=800,
+        temperature=0.2,
+        timeout=8
+    )
+    if gas_overview:
+        overview = clean_text(gas_overview)
+    else:
+        overview = clean_text(model_overview)
+
     primary_site = None
     m = re.search(r"SITIO_WEB:\s*(https?://\S+|[a-z0-9.-]+\.[a-z]{2,}(?:/[^\s,)]*)?)", overview, re.I)
     if m:
@@ -456,11 +607,23 @@ _FAST_SUMMARY_SYSTEM = (
 
 
 def _summarize_data(data, query, language, history=None, timeout=8):
-    """Speed path: realtime data already fetched -> ultra-fast LLM summary WITHOUT web tool."""
-    ai = get_ai_service()
+    """Speed path: realtime data already fetched -> ultra-fast Gas 4.5 LLM summary WITHOUT web tool."""
     lang_hint = _SEARCH_LANGS.get(language, _SEARCH_LANGS["es"])
     system = _FAST_SUMMARY_SYSTEM + "\n\n---\n" + lang_hint
 
+    # 1. Primary: Gas 4.5 via the endpoint (0.4s instant synthesis)
+    fast_res = _call_code_gas(
+        [{"role": "user", "content": f"Consulta: {query}\n\nDatos en tiempo real (JSON):\n{json.dumps(data, ensure_ascii=False)[:6000]}"}],
+        system=system,
+        max_tokens=600,
+        temperature=0.2,
+        timeout=timeout
+    )
+    if fast_res:
+        return clean_text(fast_res)
+
+    # 2. Fallback: model
+    ai = get_ai_service()
     contents = []
     for h in (history or [])[-10:]:
         if h.get("role") == "user":
@@ -468,8 +631,7 @@ def _summarize_data(data, query, language, history=None, timeout=8):
             if text:
                 contents.append({"role": "user", "parts": [{"text": text[:2000]}]})
 
-    import json as _json
-    contents.append({"role": "user", "parts": [{"text": "Consulta: " + query + "\n\nDatos en tiempo real: " + _json.dumps(data, ensure_ascii=False)[:6000]}]})
+    contents.append({"role": "user", "parts": [{"text": "Consulta: " + query + "\n\nDatos en tiempo real: " + json.dumps(data, ensure_ascii=False)[:6000]}]})
     model_name = ai.models.get("gas", "")
 
     try:
@@ -979,16 +1141,23 @@ _PRIMARY_BLOCKED = {"", "google.com", "duckduckgo.com", "bing.com", "yahoo.com",
 
 
 def _summarize_images(files, query, language, history=None, timeout=25):
-    """Vision path: user attached photos -> liquid model answers about them (no web tool)."""
-    ai = get_ai_service()
+    """Vision path: user attached photos -> Liquid model answers about them."""
     lang_hint = _SEARCH_LANGS.get(language, _SEARCH_LANGS["es"])
     system = (
-        "Eres Deiza Search. El usuario adjunta una o varias imagenes y pregunta sobre ellas. "
-        "Responde en el idioma del usuario, directo y util, en 1-4 lineas de texto plano, "
-        "sin asteriscos ni markdown. Describe solo lo que se ve realmente en las imagenes y "
-        "responde a lo preguntado. Si no se distingue algo, dilo."
+        "Eres Deiza Search impulsado por Deiza Liquid (visión multimodal). "
+        "El usuario adjunta una o varias imágenes y pregunta sobre ellas. "
+        "Responde en el idioma del usuario, directo, preciso y útil, en 1-4 líneas de texto plano, "
+        "sin asteriscos ni markdown. Describe con exactitud lo que se ve en las imágenes y "
+        "responde a la pregunta del usuario. Si algo no se distingue con claridad, dilo."
     ) + "\n\n---\n" + lang_hint
 
+    # 1. Try Liquid on the endpoint (fastest & high-fidelity vision, ~0.6s)
+    liquid_res = _call_code_liquid_vision(files, query, system, timeout=timeout)
+    if liquid_res:
+        return clean_text(liquid_res)
+
+    # 2. Fallback: model multimodal Liquid
+    ai = get_ai_service()
     contents = []
     for h in (history or [])[-6:]:
         role = "user" if h.get("role") == "user" else "model"
@@ -1020,7 +1189,7 @@ def _summarize_images(files, query, language, history=None, timeout=25):
                            .get("content", {}).get("parts", []))
         return clean_text(overview)
     except Exception as e:
-        logger.warning("Image summary failed: %s", e)
+        logger.warning("Image summary fallback failed: %s", e)
         return ""
 
 
@@ -1326,16 +1495,22 @@ def _text_search(query: str, num: int = 8) -> list:
 
 
 def _fallback_overview(query: str, results: list, language: str) -> str:
-    """Cheap overview from raw snippets when grounding is down."""
-    ai = get_ai_service()
+    """Cheap overview from raw snippets when grounding is down -> synthesized with Gas 4.5."""
     lang_hint = _SEARCH_LANGS.get(language, _SEARCH_LANGS['es'])
     system = _SEARCH_SYSTEM + "\n\n---\n" + lang_hint
     blocks = []
     for i, res in enumerate(results[:6], 1):
-        blocks.append(f"{i}. {res['title']}\nURL: {res['url']}\n{res['snippet']}")
-    contents = [{'role': 'user', 'parts': [{
-        'text': 'Consulta: ' + query + '\n\nResultados de búsqueda:\n' + '\n\n'.join(blocks)
-    }]}]
+        blocks.append(f"{i}. {res.get('title', '')}\nURL: {res.get('url', '')}\n{res.get('snippet', '')}")
+    user_msg = 'Consulta: ' + query + '\n\nResultados de búsqueda:\n' + '\n\n'.join(blocks)
+
+    # 1. Gas 4.5 synthesis
+    gas_res = _call_code_gas([{"role": "user", "content": user_msg}], system=system, max_tokens=600, temperature=0.2, timeout=8)
+    if gas_res:
+        return clean_text(gas_res)
+
+    # 2. Fallback to model
+    ai = get_ai_service()
+    contents = [{'role': 'user', 'parts': [{'text': user_msg}]}]
     model_name = ai.models.get('gas', '')
     try:
         data = ai._call_api(model_name, contents, system, use_web=False, timeout=12)
@@ -1358,24 +1533,41 @@ def run_search(query, custom_urls=None, language="es", history=None, files=None)
     has_images = any(f.get("is_image") or (f.get("mime_type") or "").startswith("image/")
                      for f in (files or []))
     if has_images:
+        # Route directly to Liquid (supports vision multimodal)
         overview = _summarize_images(files, query, language, history)
         if not overview:
             return {"error": "No se pudo analizar la imagen. Inténtalo de nuevo.",
                     "direct_link": None, "data": None, "primary_site": None}
         return {"ai_overview": overview, "sources": [], "data": None, "direct_link": None,
-                "primary_site": None}
+                "primary_site": None, "model": "liquid-5.1"}
+
+    # Redis indexed query cache (instant response < 15ms for repeat/indexed queries)
+    if not history:
+        cached = _get_cached_search(query, custom_urls, language)
+        if cached:
+            cached["cached"] = True
+            return cached
 
     direct = match_direct_link(query)
     if direct:
-        return {"direct_link": direct}
+        res = {"direct_link": direct}
+        if not history:
+            _set_cached_search(query, custom_urls, language, res, ttl=86400)
+        return res
 
     shop = _detect_shopping(query, language)
     if shop:
-        return {"direct_link": shop}
+        res = {"direct_link": shop}
+        if not history:
+            _set_cached_search(query, custom_urls, language, res, ttl=86400)
+        return res
 
     social = match_social_profile(query)
     if social:
-        return {"direct_link": social}
+        res = {"direct_link": social}
+        if not history:
+            _set_cached_search(query, custom_urls, language, res, ttl=86400)
+        return res
 
     import threading
     _img_holder: list = []
@@ -1395,12 +1587,15 @@ def run_search(query, custom_urls=None, language="es", history=None, files=None)
     data = detect_realtime(query, history=history)
 
     if data:
-        _img_done.wait(timeout=3)
+        _img_done.wait(timeout=2.0)
         overview = _summarize_data(data, query, language, history)
         title, url, domain = _DATA_SOURCE.get(data.get("type"), ("", "", ""))
         sources = [{"url": url, "title": title, "domain": domain}] if url else []
-        return {"ai_overview": overview, "sources": sources, "data": data, "direct_link": None,
-                "primary_site": None, "images": _img_holder}
+        res = {"ai_overview": overview, "sources": sources, "data": data, "direct_link": None,
+               "primary_site": None, "images": _img_holder, "model": "gas-4.5"}
+        if not history:
+            _set_cached_search(query, custom_urls, language, res, ttl=300)
+        return res
 
     try:
         overview, sources, primary_site = _grounding_search(query, custom_urls, language, history=history)
@@ -1409,7 +1604,6 @@ def run_search(query, custom_urls=None, language="es", history=None, files=None)
         overview, sources, primary_site = "", [], None
 
     if not overview and not sources and not primary_site:
-        # Grounding rate-limited/down — fall back to plain SearXNG text
         fb_results = _text_search(query)
         if fb_results:
             sources = [{'url': r['url'], 'title': r['title'], 'domain': _domain(r['url'])}
@@ -1437,6 +1631,9 @@ def run_search(query, custom_urls=None, language="es", history=None, files=None)
             "primary_site": None,
         }
 
-    _img_done.wait(timeout=6)
-    return {"ai_overview": overview, "sources": sources, "data": None, "direct_link": None,
-            "primary_site": primary_site, "images": _img_holder}
+    _img_done.wait(timeout=4)
+    res = {"ai_overview": overview, "sources": sources, "data": None, "direct_link": None,
+           "primary_site": primary_site, "images": _img_holder, "model": "gas-4.5"}
+    if not history and overview:
+        _set_cached_search(query, custom_urls, language, res, ttl=3600)
+    return res

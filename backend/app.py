@@ -198,6 +198,122 @@ def _persist_chat_image(raw_bytes: str, mime_type: str, filename: str, generated
         return ''
     return '/api/files/' + fid
 
+# ── usage v2: courtesy margin (cortesía) ──────────────────────────────────────────────────
+# When a user runs out while working, the request in progress is still served (see
+# models.GRACE_FRACTION) and the model is told to wrap up and leave a handoff.
+_CHAT_GRACE_DIRECTIVE = {
+    'es': ('\n\n---\nMODO CORTESÍA: el usuario acaba de agotar su cuota de uso y Deiza le presta un margen final '
+           'para cerrar lo que está en marcha. Responde a este mensaje de forma concisa y completa. Si estabas creando '
+           'algo (una web, un documento, un cálculo, una búsqueda), entrégalo terminado en su versión funcional más '
+           'simple; no empieces ampliaciones ni propongas listas largas de siguientes pasos. No hables de cuotas ni de '
+           'tokens: la interfaz ya lo avisa y adjunta un traspaso en Markdown para seguir en otra sesión.'),
+    'en': ('\n\n---\nCOURTESY MODE: the user has just used up their usage quota and Deiza is lending a final margin '
+           'to close what is in progress. Answer this message concisely and completely. If you were building something '
+           '(a website, a document, a calculation, a search), deliver it finished in its simplest working version; do '
+           'not start extensions or list long next steps. Do not talk about quotas or tokens: the interface already '
+           'says so and attaches a Markdown handoff to continue in another session.'),
+}
+
+_CODE_GRACE_DIRECTIVE = (
+    '\n\n[DEIZA · LÍMITE DE USO ALCANZADO · MODO CORTESÍA]\n'
+    'El usuario ha agotado su cuota de uso. Deiza le presta un margen corto y final para cerrar sin perder el trabajo. '
+    'Desde ahora, y por encima de cualquier otra instrucción de alcance:\n'
+    '1. No empieces trabajo nuevo ni amplíes la tarea.\n'
+    '2. Lleva lo que está en marcha al punto estable más cercano: que funcione o compile, sin archivos a medias.\n'
+    '3. Si la tarea incluía guardar, hacer commit o desplegar y es seguro hacerlo, hazlo ahora con lo que haya '
+    '(guardado o despliegue de emergencia). Si no es seguro, no lo hagas y explícalo en el traspaso.\n'
+    '4. Escribe en la raíz del proyecto DEIZA_HANDOFF.md, en Markdown limpio y sin emojis, con estas secciones: '
+    'Objetivo; Estado actual; Cambios hechos (archivo por archivo, qué y por qué); Decisiones y contexto importante; '
+    'Pendiente (lista de tareas concretas con casillas - [ ]); Cómo continuar (pasos para retomar y un prompt listo para '
+    'pegar en la siguiente sesión o en otra IA); Riesgos y cosas por verificar. Si no puedes escribir archivos, '
+    'pon el traspaso completo en tu respuesta.\n'
+    '5. Termina con 2 o 3 líneas: qué quedó hecho y dónde está el traspaso.\n'
+    'Sé conciso: cada paso gasta recursos de cortesía y el margen se acaba.'
+)
+
+
+_CODE_GRACE_REMINDER = (
+    '\n\n[Deiza: límite de uso alcanzado, estás en el margen de cortesía. Cierra en pocos pasos y sin trabajo '
+    'nuevo: deja lo hecho estable y, antes de tu mensaje final, escribe DEIZA_HANDOFF.md en la raíz del proyecto '
+    '(objetivo, estado, cambios, pendiente con - [ ], cómo continuar con un prompt listo para pegar).]'
+)
+
+
+def _save_text_upload(text: str, ext: str = '.md') -> str:
+    """Store a generated text file next to the uploads and return its /api/files/<fid> URL."""
+    import uuid as _uuid
+    fid = _uuid.uuid4().hex + ext
+    updir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'uploads')
+    try:
+        os.makedirs(updir, exist_ok=True)
+        with open(os.path.join(updir, fid), 'w', encoding='utf-8') as fh:
+            fh.write(text)
+    except Exception:
+        return ''
+    return '/api/files/' + fid
+
+
+_HANDOFF_MODEL = os.getenv('HANDOFF_MODEL', '') or os.getenv('MODEL_LITE', '')   # small, fast model for the handoff
+
+
+def _build_chat_handoff(history, message, response, language='es'):
+    """Markdown handoff of a chat that ran out of quota: goal, context, what was done, what is left
+    and a ready-to-paste prompt. A small fast model writes it; a plain template if that fails."""
+    import urllib.request as _ur
+    es = language == 'es'
+    lines = []
+    for _m in list(history or [])[-30:]:
+        _role = getattr(_m, 'role', '') or ''
+        _c = str(getattr(_m, 'content', '') or '')
+        if not _c.strip():
+            continue
+        _art = getattr(_m, 'artifact_data', None) or None
+        _an = ''
+        if isinstance(_art, dict) and _art.get('name'):
+            _an = f" [artefacto: {_art.get('name')}]"
+        lines.append(f"{'USUARIO' if _role == 'user' else 'DEIZA'}{_an}: {_c[:3500]}")
+    if not lines or not lines[-1].startswith('USUARIO'):
+        lines.append(f'USUARIO: {str(message or "")[:3500]}')
+    lines.append(f'DEIZA (última respuesta): {str(response or "")[:6000]}')
+    transcript = '\n\n'.join(lines)[-60000:]
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    instr = (
+        'Escribe un documento de traspaso en Markdown limpio para continuar esta conversación en otra sesión o en '
+        'otra IA. Usa exactamente esta estructura:\n# Traspaso: <tema en pocas palabras>\n## Objetivo\n## Contexto\n'
+        '## Hecho hasta ahora\n## Pendiente\n(tareas concretas, cada una con - [ ])\n## Cómo continuar\n(un prompt '
+        'listo para pegar dentro de un bloque ```text)\nReglas: solo datos que estén en la conversación, sin inventar; '
+        'conciso; sin emojis; si hay artefactos o código, di su nombre y su estado sin copiar código largo. '
+        + ('Escribe en español.' if es else f'Write in the user\'s language ({language}).')
+    )
+    md = ''
+    try:
+        from ai_service import _model_request as _gr
+        url, headers = _gr(_HANDOFF_MODEL, 'generateContent')
+        body = json.dumps({
+            'system_instruction': {'parts': [{'text': instr}]},
+            'contents': [{'role': 'user', 'parts': [{'text': transcript}]}],
+            'generationConfig': {'temperature': 0.3, 'maxOutputTokens': 4000},
+        }).encode('utf-8')
+        req = _ur.Request(url, data=body, headers=headers, method='POST')
+        with _ur.urlopen(req, timeout=45) as resp:
+            d = json.loads(resp.read())
+        parts = (((d.get('candidates') or [{}])[0].get('content') or {}).get('parts') or [])
+        md = ''.join(p.get('text', '') for p in parts if not p.get('thought')).strip()
+        if md.startswith('```'):
+            md = md.strip('`').lstrip('markdown').strip()
+    except Exception as _he:
+        logger.warning(f'handoff model call failed: {_he}')
+    if len(md) < 80:
+        asks = [l[9:].strip()[:300] for l in lines if l.startswith('USUARIO')][-8:]
+        md = ('# Traspaso\n\n## Objetivo\n' + (asks[-1] if asks else '') + '\n\n## Lo que se pidió\n'
+              + '\n'.join(f'- {a}' for a in asks) + '\n\n## Última respuesta\n' + str(response or '')[:4000]
+              + '\n\n## Cómo continuar\nPega este documento en una sesión nueva y pide seguir desde aquí.\n')
+    md = md.strip() + f'\n\n---\nGenerado por Deiza el {today} al agotarse la cuota de uso.\n'
+    name = f'deiza-traspaso-{today}.md'
+    url = _save_text_upload(md, '.md')
+    return {'name': name, 'url': url, 'content': md[:20000]}
+
+
 app = Flask(__name__)
 app.secret_key = get_secret_key()
 app.url_map.strict_slashes = False
@@ -380,13 +496,13 @@ def _admin_ok() -> bool:
     return bool(secret) and _hm.compare_digest(given, secret)
 
 
-_MODEL_ALIASES = {'gas': 'fast', 'liquid': 'pro', 'solid': 'ultra', 'vainilla': 'vainilla'}
+_MODEL_ALIASES = {'gas': 'fast', 'gas-4.5': 'fast', 'liquid': 'pro', 'liquid-5.1': 'pro', 'solid': 'ultra', 'solid-5': 'ultra', 'vainilla': 'fast'}  # Vainilla retired -> Gas
 
 
 def _normalize_model(m):
     """Map UI tier names (gas/liquid/solid) to internal keys (fast/pro/ultra)."""
     m = _MODEL_ALIASES.get(m, m)
-    return m if m in ('fast', 'pro', 'ultra', 'vainilla') else 'fast'
+    return m if m in ('fast', 'pro', 'ultra') else 'fast'
 
 
 def _get_user_skills(user_id):
@@ -610,21 +726,31 @@ def send_message_stream():
     if not check_rate_limit(user_id):
         return jsonify({'error': 'Rate limit exceeded. Please wait a moment.'}), 429
 
-    if model not in ('fast', 'pro', 'ultra', 'vainilla'):
+    if model == 'vainilla':
+        model = 'fast'
+    if model not in ('fast', 'pro', 'ultra'):
         model = 'pro' if mode == 'agent' else 'fast'
 
     # Plan + sub-limit check before setting up stream
     from models import User as UserModel
     user_obj = UserModel.query.get(user_id)
+    _chat_grace = False
     if user_obj:
         can_use, reason = user_obj.can_use_model_with_sublimit(model)
-        usage = user_obj.get_current_usage()
+        _allowed, usage = user_obj.usage_gate()
         if not can_use:
             if reason == 'model_sublimit':
                 return jsonify({'error': 'model_sublimit', 'model': model, 'plan': user_obj.get_plan(), 'usage': usage}), 429
             return jsonify({'error': 'plan_required', 'model': model, 'plan': user_obj.get_plan()}), 403
-        if usage['exhausted'] and model != 'vainilla':
+        if not _allowed:
             return jsonify({'error': 'usage_limit', 'usage': usage}), 429
+        _chat_grace = usage.get('state') == 'grace'
+        if _chat_grace:
+            # in chat the courtesy margin is one closing answer with its handoff, not more turns
+            from models import UsageWindow as _UWG
+            if _UWG.query.filter(_UWG.user_id == user_id, _UWG.model == 'handoff',
+                                 _UWG.created_at >= datetime.utcnow() - timedelta(hours=5)).first():
+                return jsonify({'error': 'usage_limit', 'usage': dict(usage, state='exhausted', grace_active=False)}), 429
 
     try:
         from models import Chat, Message as DBMessage
@@ -742,6 +868,20 @@ def send_message_stream():
     _mem_extract = bool(data.get('memory_extract'))
     _stream_memory_ctx = '' if _mem_extract else _build_memory_context(user_obj)
     _skills_ctx = _build_skills_context(user_id, language)
+    if _chat_grace:
+        _skills_ctx = (_skills_ctx or '') + _CHAT_GRACE_DIRECTIVE.get(language, _CHAT_GRACE_DIRECTIVE['en'])
+    # usage v2: filled by ai_service with what the provider reports for every model call
+    _usage_acc = {}
+    _est_input_chars = len(message or '') + sum(len(str(getattr(_h, 'content', '') or '')) for _h in (history or [])) \
+        + len(project_context or '') + len(_stream_memory_ctx or '') + len(_skills_ctx or '')
+
+    def _chat_units(_text_len):
+        from models import usage_units as _uu
+        if _usage_acc.get('calls'):
+            return max(1, _uu(prompt=_usage_acc.get('prompt'), completion=_usage_acc.get('output'),
+                              cached=_usage_acc.get('cached'), reasoning=_usage_acc.get('reasoning')))
+        # nothing reported (cut before the end): the system prompt (~6k), history, files and answer
+        return max(1, _uu(prompt=6000 + _est_input_chars // 4, completion=max(_text_len // 4, 1)))
 
     def generate():
         full_content = ''
@@ -749,6 +889,7 @@ def send_message_stream():
         _stream_sources = []
         _stream_images = []
         _stream_pptx = None
+        _stream_handoff = None
         _stream_thinking = ('Pensando...' if language == 'es' else 'Thinking...')
         client_gone = False
         _completed_normally = False
@@ -924,8 +1065,11 @@ def send_message_stream():
                     _text = ('No he podido generar la respuesta esta vez. '
                              'Vuelve a intentarlo, suele funcionar al reintentar.')
             _msg = _DBM(chat_id=new_chat_id, role='assistant', content=_text, artifact_data=_artifact)
-            if _stream_sources or _stream_images:
-                _msg.meta_data = {'sources': _stream_sources, 'images': _stream_images}
+            if _stream_sources or _stream_images or _stream_handoff:
+                _meta = {'sources': _stream_sources, 'images': _stream_images}
+                if _stream_handoff:
+                    _meta['handoff'] = _stream_handoff
+                _msg.meta_data = _meta
             db.session.add(_msg)
             try:
                 from models import Chat as _ChatP
@@ -934,11 +1078,12 @@ def send_message_stream():
                     _cp.updated_at = datetime.utcnow()
             except Exception:
                 pass
-            _estimated_tokens = max(_raw_content_len // 4, 1)
+            _estimated_tokens = _chat_units(_raw_content_len)
             db.session.commit()
             _up = _DBU.query.get(user_id)
-            if _up and not _mem_extract:
+            if _up and not _mem_extract and not _tokens_recorded:
                 _up.record_usage(_estimated_tokens, model)
+                logger.info(f'Chat usage user={user_id} model={model} units={_estimated_tokens} reported={_usage_acc or "estimate"} grace={_chat_grace}')
             _tokens_recorded = True
             db.session.commit()
             return _msg.id, _artifact
@@ -1160,7 +1305,7 @@ def send_message_stream():
                                              project_context=project_context, memory_context=_stream_memory_ctx,
                                              variant=model_variant, fallback=chain_fallback,
                                              custom_instructions=custom_instructions,
-                                             skills_context=_skills_ctx)
+                                             skills_context=_skills_ctx, usage_sink=_usage_acc)
             _pump_start(_gen)
             if _gen_key:
                 _gen_save()
@@ -1229,7 +1374,7 @@ def send_message_stream():
             # Record tokens for aborted/cancelled streams (only while the client is still here).
             # Normal completions are charged once, in _persist() below.
             if not client_gone and not _completed_normally and not _tokens_recorded and full_content and not _mem_extract:
-                _abort_tokens = max(len(full_content) // 4, 1)
+                _abort_tokens = _chat_units(len(full_content))
                 try:
                     from models import User as _AbortUser
                     _au = _AbortUser.query.get(user_id)
@@ -1293,6 +1438,16 @@ def send_message_stream():
                         except Exception:
                             pass
                         db.session.commit()
+                        if not _tokens_recorded and not _mem_extract:
+                            try:
+                                from models import User as _GXU
+                                _gxu = _GXU.query.get(user_id)
+                                if _gxu:
+                                    _gxu.record_usage(_chat_units(len(full_content)), model)
+                                    db.session.commit()
+                            except Exception as _gxe:
+                                db.session.rollback()
+                                logger.warning(f'bg partial usage record failed: {_gxe}')
                         _tokens_recorded = True
                         logger.info(f'Partial response saved on bg stop: chat={new_chat_id} len={len(full_content)}')
                     else:
@@ -1336,6 +1491,25 @@ def send_message_stream():
                                 'Vuelve a intentarlo, suele funcionar al reintentar.')
             if not client_gone:
                 yield f"data: {json.dumps({'chunk': full_content})}\n\n"
+        if _chat_grace and not client_gone and full_content.strip():
+            try:
+                yield f"data: {json.dumps({'thinking': 'Preparando el traspaso...' if language == 'es' else 'Preparing the handoff...'})}\n\n"
+                _hbox = {}
+                _stream_handoff = yield from _run_with_pings(_hbox, _build_chat_handoff, history, message, full_content, language)
+                if _stream_handoff:
+                    try:
+                        from models import User as _HU
+                        _hu = _HU.query.get(user_id)
+                        if _hu:
+                            _hu.record_usage(0, 'handoff')   # marks the courtesy answer as given
+                            db.session.commit()
+                    except Exception:
+                        db.session.rollback()
+                    yield f"data: {json.dumps({'handoff': _stream_handoff})}\n\n"
+            except GeneratorExit:
+                client_gone = True
+            except Exception as _hoe:
+                logger.warning(f'chat handoff failed: {_hoe}')
         _msg_id, _artifact = _persist(partial=False, artifact=_candidate_art)
         if client_gone:
             _gen_clear()
@@ -1344,7 +1518,12 @@ def send_message_stream():
         _gen_clear()
         _art_info = f"name={_artifact.get('name','?')} content_len={len(_artifact.get('content',''))}" if _artifact else 'NONE'
         logger.info(f'DONE event: artifact={_art_info} full_content_len={len(full_content)} tokens={max(len(full_content) // 4, 1)}')
-        yield f"data: {json.dumps({'done': True, 'artifact': _artifact, 'msg_id': _msg_id})}\n\n"
+        _done = {'done': True, 'artifact': _artifact, 'msg_id': _msg_id}
+        if _chat_grace:
+            _done['usage_state'] = 'grace'
+            if _stream_handoff:
+                _done['handoff'] = _stream_handoff
+        yield f"data: {json.dumps(_done)}\n\n"
 
     origin = request.headers.get('Origin', '')
     cors_headers = {
@@ -1758,10 +1937,15 @@ def code_auth_required(f):
 DEIZA_API_MODELS = {
     'deiza-omniscient': ('pro', None),
     'omniscient': ('pro', None),
+    'deiza-gas-4.5': ('fast', None),
+    'deiza-liquid-5.1': ('pro', None),
+    'deiza-liquid-4.5': ('pro', 'liquid45'),
+    'deiza-solid-5': ('ultra', None),
+    # previous ids keep working for existing integrations
     'deiza-gas-4.1': ('fast', None),
     'deiza-liquid-5': ('pro', None),
-    'deiza-liquid-4.5': ('pro', 'liquid45'),
     'deiza-solid-4.5': ('ultra', None),
+    'deiza-solid-4.6': ('ultra', None),
     # short aliases
     'gas': ('fast', None), 'liquid': ('pro', None), 'solid': ('ultra', None),
 }
@@ -1775,8 +1959,8 @@ def code_models():
         'models': [
             {
                 'id': 'deiza-liquid',
-                'name': 'Deiza Liquid 5',
-                'tag': 'Liquid 5',
+                'name': 'Deiza Liquid 5.1',
+                'tag': 'Liquid 5.1',
                 'badge': '1M tokens · Equilibrado',
                 'tier': 'code',
                 'default': True,
@@ -1786,45 +1970,34 @@ def code_models():
             },
             {
                 'id': 'deiza-solid',
-                'name': 'Deiza Solid 4.6',
-                'tag': 'Solid 4.6',
-                'badge': 'Razonamiento profundo',
+                'name': 'Deiza Solid 5',
+                'tag': 'Solid 5',
+                'badge': 'Nuevo · Razonamiento profundo',
                 'tier': 'ultra',
                 'default': False,
                 'provider': 'deizalab',
-                'description': 'Máximo razonamiento y lógica profunda. Ideal para arquitectura, seguridad, refactorizaciones masivas y depuración compleja.',
-                'features': ['deep_reasoning', 'architecture', 'surgical_diffs', 'tools', 'streaming']
+                'description': 'El modelo más capaz de Deiza. Metódico y preciso: planifica antes de tocar el código, verifica cada paso y no da nada por supuesto. Para arquitectura, refactorizaciones grandes, depuración difícil e investigación.',
+                'features': ['deep_reasoning', 'architecture', 'surgical_diffs', 'multimodal_vision', 'tools', 'streaming']
             },
             {
                 'id': 'deiza-gas',
                 'name': 'Deiza Gas 4.5',
                 'tag': 'Gas 4.5',
-                'badge': 'Ultra-rápido y visión',
+                'badge': 'Ultra-rápido',
                 'tier': 'fast',
                 'default': False,
                 'provider': 'deizalab',
-                'description': 'Velocidad ultra-rápida y soporte multimodal nativo. Para iteraciones ágiles, prototipado y tareas directas.',
-                'features': ['ultra_fast', 'multimodal_vision', 'tools', 'streaming']
-            },
-            {
-                'id': 'deiza-vainilla',
-                'name': 'Deiza Vainilla',
-                'tag': 'Vainilla',
-                'badge': 'Ligero & Ilimitado',
-                'tier': 'vainilla',
-                'default': False,
-                'provider': 'deizalab',
-                'description': 'Modelo suave, ultra-rápido y conversacional. Siempre disponible y sin consumo de cuota de tokens.',
-                'features': ['conversational', 'zero_cost', 'unlimited', 'streaming']
+                'description': 'El más rápido y ligero. Para iteraciones ágiles, cambios pequeños, scripts y tareas directas.',
+                'features': ['ultra_fast', 'tools', 'streaming']
             },
             {
                 'id': 'deiza-omniscient',
                 'name': 'Deiza Omniscient',
-                'tag': 'Liquid 5',
+                'tag': 'Liquid 5.1',
                 'alias_of': 'deiza-liquid',
                 'default': False,
                 'provider': 'deizalab',
-                'description': 'Alias de compatibilidad para Deiza Liquid 5.',
+                'description': 'Alias de compatibilidad para Deiza Liquid 5.1.',
                 'features': ['autonomous_coding', 'surgical_diffs', 'tools', 'streaming']
             }
         ]
@@ -1852,6 +2025,19 @@ def code_usage():
         'next_reset': usage['next_reset'],
         'reset_in_seconds': usage['reset_in_seconds'],
         'exhausted': usage['exhausted'],
+        'weekly_used': usage.get('weekly_used', 0),
+        'weekly_limit': usage.get('weekly_limit', 0),
+        'weekly_remaining': usage.get('weekly_remaining', 0),
+        'weekly_pct': usage.get('weekly_pct', 0),
+        'weekly_exhausted': usage.get('weekly_exhausted', False),
+        'limit_scope': usage.get('limit_scope', 'window'),
+        'pct': usage.get('pct', 0),
+        'state': usage.get('state', 'ok'),
+        'grace_active': usage.get('grace_active', False),
+        'grace_limit': usage.get('grace_limit', 0),
+        'grace_used': usage.get('grace_used', 0),
+        'grace_remaining': usage.get('grace_remaining', 0),
+        'weekly_reset_at': usage.get('weekly_reset_at'),
     })
 
 
@@ -1894,7 +2080,9 @@ def code_chat_stream():
         finally:
             if full_content:
                 try:
-                    _tokens = max(len(full_content) // 4, 1)
+                    _in_tokens = (len(str(message or '')) + sum(len(str(h.get('content') or '')) for h in history)) // 4
+                    _out_tokens = max(len(full_content) // 4, 1)
+                    _tokens = _in_tokens + _out_tokens
                     _u = _User.query.get(user_id)
                     if _u:
                         _u.record_usage(_tokens, 'code')
@@ -1939,32 +2127,54 @@ CODE_API_URL = os.getenv("CODE_API_URL", "")
 CODE_API_KEY = os.getenv("CODE_API_KEY", "")
 CODE_MODEL_GAS = os.getenv("CODE_MODEL_GAS", "")
 CODE_MODEL_LIQUID = os.getenv("CODE_MODEL_LIQUID", "")
-CODE_MODEL_SOLID = os.getenv("CODE_MODEL_SOLID", "")
-CODE_MODEL_VAINILLA = os.getenv("CODE_MODEL_VAINILLA", "")
 CODE_MODEL_DEFAULT = os.getenv("CODE_MODEL_DEFAULT", "") or CODE_MODEL_LIQUID
+# Solid can live on its own OpenAI-compatible endpoint (SOLID_API_URL / SOLID_API_KEY);
+# when they are empty it uses the Code endpoint.
+SOLID5_URL = os.getenv("SOLID_API_URL", "") or CODE_API_URL
+SOLID5_KEY = os.getenv("SOLID_API_KEY", "") or CODE_API_KEY
+SOLID5_MODEL = os.getenv("CODE_MODEL_SOLID", "")
+CODE_MODEL_SOLID = SOLID5_MODEL
+SOLID5_FALLBACK_MODEL = os.getenv("CODE_MODEL_SOLID_FALLBACK", "")   # served when Solid is busy
+_SOLID_COOLDOWN_LOCK = threading.Lock()
+_solid_cooldown_until = 0.0
+
+
+def _code_upstream(model):
+    """(url, key) of the endpoint that serves an upstream model."""
+    if model == SOLID5_MODEL:
+        return SOLID5_URL, SOLID5_KEY
+    return CODE_API_URL, CODE_API_KEY
+
 
 DEIZA_CODE_MODEL_MAP = {
     'deiza-liquid': (CODE_MODEL_LIQUID, 'code'),
     'liquid': (CODE_MODEL_LIQUID, 'code'),
+    'deiza-liquid-5.1': (CODE_MODEL_LIQUID, 'code'),
+    'liquid-5.1': (CODE_MODEL_LIQUID, 'code'),
     'deiza-liquid-5': (CODE_MODEL_LIQUID, 'code'),
     'liquid-5': (CODE_MODEL_LIQUID, 'code'),
     'deiza-omniscient': (CODE_MODEL_LIQUID, 'code'),
     'omniscient': (CODE_MODEL_LIQUID, 'code'),
-    'deiza-solid': (CODE_MODEL_SOLID, 'ultra'),
-    'solid': (CODE_MODEL_SOLID, 'ultra'),
-    'deiza-solid-4.5': (CODE_MODEL_SOLID, 'ultra'),
-    'solid-4.5': (CODE_MODEL_SOLID, 'ultra'),
-    'deiza-solid-4.6': (CODE_MODEL_SOLID, 'ultra'),
-    'solid-4.6': (CODE_MODEL_SOLID, 'ultra'),
+    'deiza-solid': (SOLID5_MODEL, 'ultra'),
+    'solid': (SOLID5_MODEL, 'ultra'),
+    'deiza-solid-5': (SOLID5_MODEL, 'ultra'),
+    'solid-5': (SOLID5_MODEL, 'ultra'),
+    'deiza-solid-4.5': (SOLID5_MODEL, 'ultra'),
+    'solid-4.5': (SOLID5_MODEL, 'ultra'),
+    'deiza-solid-4.6': (SOLID5_MODEL, 'ultra'),
+    'solid-4.6': (SOLID5_MODEL, 'ultra'),
     'deiza-gas': (CODE_MODEL_GAS, 'fast'),
     'gas': (CODE_MODEL_GAS, 'fast'),
     'deiza-gas-4.1': (CODE_MODEL_GAS, 'fast'),
     'gas-4.1': (CODE_MODEL_GAS, 'fast'),
     'deiza-gas-4.5': (CODE_MODEL_GAS, 'fast'),
     'gas-4.5': (CODE_MODEL_GAS, 'fast'),
-    'deiza-vainilla': (CODE_MODEL_VAINILLA, 'vainilla'),
-    'vainilla': (CODE_MODEL_VAINILLA, 'vainilla'),
-    'vanilla': (CODE_MODEL_VAINILLA, 'vainilla'),
+    'deepseek': ('deepseek.v3.2', 'code'),
+    'deiza-deepseek': ('deepseek.v3.2', 'code'),
+    # Vainilla was retired: clients that still ask for it are served by Gas
+    'deiza-vainilla': (CODE_MODEL_GAS, 'fast'),
+    'vainilla': (CODE_MODEL_GAS, 'fast'),
+    'vanilla': (CODE_MODEL_GAS, 'fast'),
 }
 
 def _stream_code_upstream(messages, max_tokens=4096, temperature=0.2):
@@ -2086,46 +2296,6 @@ def _code_msg_tokens(m):
     return n * 2 // 5 + 8
 
 
-def _vainilla_code_messages(messages):
-    """Vainilla (a small model) only takes strictly alternating user/assistant turns and no tool roles.
-    Code conversations carry tool calls and results, so they are flattened into plain turns."""
-    out = []
-    for m in messages:
-        role = m.get('role')
-        c = m.get('content')
-        if isinstance(c, list):
-            text = '\n'.join(str(p.get('text') or '') for p in c if isinstance(p, dict) and p.get('type') == 'text')
-        else:
-            text = str(c or '')
-        if role == 'system':
-            if out and out[0]['role'] == 'system':
-                out[0]['content'] += '\n\n' + text
-            else:
-                out.insert(0, {'role': 'system', 'content': text})
-            continue
-        if role == 'tool':
-            role, text = 'user', '[Resultado de una herramienta]\n' + text[:4000]
-        elif role == 'assistant' and m.get('tool_calls'):
-            names = ', '.join(((tc.get('function') or {}).get('name') or 'herramienta') for tc in m['tool_calls'])
-            text = (text + '\n' if text.strip() else '') + f'[Usé: {names}]'
-        if role not in ('user', 'assistant'):
-            role = 'user'
-        if not text.strip():
-            continue
-        if out and out[-1]['role'] == role:
-            out[-1]['content'] += '\n\n' + text
-        else:
-            out.append({'role': role, 'content': text})
-    start = 1 if out and out[0]['role'] == 'system' else 0
-    while len(out) > start and out[start]['role'] != 'user':
-        del out[start]
-    if len(out) == start:
-        out.append({'role': 'user', 'content': 'Hola'})
-    if out[-1]['role'] == 'assistant':
-        out.append({'role': 'user', 'content': 'Continúa.'})
-    return out
-
-
 def _fit_code_context(messages, budget):
     """Make a Code conversation fit `budget` tokens without breaking tool call / result pairs."""
     total = lambda: sum(_code_msg_tokens(m) for m in messages)
@@ -2188,7 +2358,74 @@ def _fit_code_context(messages, budget):
     return messages
 
 
-def _omniscient_completions(user_id, data, stream, model_id, created, upstream_model=None, tier='code'):
+def _usage_limit_message(usage):
+    """One line for clients that print `message` when the quota (and the courtesy margin) ran out."""
+    try:
+        secs = int(usage.get('reset_in_seconds') or 0)
+    except Exception:
+        secs = 0
+    h, m = secs // 3600, (secs % 3600) // 60
+    when = (f'{h} h {m} min' if h else f'{m} min') if secs else 'unas horas'
+    scope = 'semanal' if usage.get('limit_scope') == 'weekly' else 'de 5 horas'
+    return (f'Has agotado tu uso {scope} y el margen de cortesía. Se renueva en {when}. '
+            'Si la tarea quedó a medias, el traspaso está en DEIZA_HANDOFF.md.')
+
+
+# usage v2: engines without a prompt cache re-read the whole conversation every agent round.
+# Remember what each session already sent: that prefix is billed at the "reread" weight.
+_CODE_PREFIX_MEM = {}
+_CODE_PREFIX_LOCK = threading.Lock()
+
+
+def _code_msgs_hash(msgs):
+    import hashlib as _hl
+    return _hl.sha1(json.dumps(msgs, sort_keys=True, ensure_ascii=False, default=str).encode('utf-8', 'ignore')).hexdigest()
+
+
+def _code_session_key(user_id, msgs):
+    first_sys = next((str(m.get('content') or '')[:3000] for m in msgs if m.get('role') == 'system'), '')
+    first_user = next((json.dumps(m.get('content'), ensure_ascii=False, default=str)[:3000] for m in msgs if m.get('role') == 'user'), '')
+    return (user_id, _code_msgs_hash([first_sys, first_user]))
+
+
+def _code_reread_lookup(user_id, msgs):
+    """Prompt tokens of the previous request of this session when it is a prefix of this one."""
+    key = _code_session_key(user_id, msgs)
+    with _CODE_PREFIX_LOCK:
+        prev = _CODE_PREFIX_MEM.get(key)
+    if not prev:
+        return key, 0
+    n, h, prompt_tokens, _ts = prev
+    if n <= len(msgs) and time.time() - _ts < 3600 and _code_msgs_hash(msgs[:n]) == h:
+        return key, int(prompt_tokens or 0)
+    return key, 0
+
+
+def _code_reread_store(key, msgs, prompt_tokens):
+    now = time.time()
+    with _CODE_PREFIX_LOCK:
+        _CODE_PREFIX_MEM[key] = (len(msgs), _code_msgs_hash(msgs), int(prompt_tokens or 0), now)
+        if len(_CODE_PREFIX_MEM) > 3000:
+            for k in [k for k, v in _CODE_PREFIX_MEM.items() if now - v[3] > 3600]:
+                _CODE_PREFIX_MEM.pop(k, None)
+
+
+def _code_usage_comment(user_id):
+    """`: deiza-usage {...}` SSE comment: live quota state for clients (old ones ignore comments)."""
+    try:
+        from models import User as _UU
+        _u = _UU.query.get(user_id)
+        if not _u:
+            return ''
+        u = _u.get_current_usage()
+        keep = ('state', 'pct', 'tokens_used', 'token_limit', 'reset_in_seconds', 'weekly_pct', 'limit_scope',
+                'grace_limit', 'grace_used', 'grace_remaining', 'exhausted')
+        return ': deiza-usage ' + json.dumps({k: u.get(k) for k in keep}) + '\n\n'
+    except Exception:
+        return ''
+
+
+def _omniscient_completions(user_id, data, stream, model_id, created, upstream_model=None, tier='code', grace=False):
     """deiza-code v1.3 integration: OpenAI-compatible proxy to the Deiza Omniscient cluster."""
     import requests as _rq
     from flask import send_from_directory, Response, stream_with_context
@@ -2196,20 +2433,33 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     messages = _omniscient_messages(data)
     if not messages or messages[-1]['role'] == 'system':
         return jsonify({'error': {'message': 'Messages are required', 'type': 'invalid_request'}}), 400
-    # code context fit v1: every request must fit the engine's real window (Liquid and Gas 262,144
-    # tokens, Solid 202,752, Vainilla 131,072). Clients built for "1M tokens" sent more and every
+    # code context fit v1: every request must fit the engine's real window (Liquid and Solid 262,144
+    # tokens, Gas 131,072). Clients built for "1M tokens" sent more and every
     # request of a long session failed. Here: shorten huge tool results, then drop the oldest steps,
     # always keeping the system prompt, the user's current request and the latest steps whole.
-    _ctx_limit = {CODE_MODEL_SOLID: 202752, CODE_MODEL_VAINILLA: 131072}.get(upstream_model or CODE_MODEL_LIQUID, 262144)
+    _ctx_limit = {CODE_MODEL_GAS: 131072}.get(upstream_model or CODE_MODEL_LIQUID, 262144)
     try:
         _req_max = max(256, min(int(data.get('max_tokens') or 16384), 32768))
     except Exception:
         _req_max = 16384
-    # Gas's tokenizer counts about 15 % more tokens for the same code, so it gets a wider margin.
-    _ctx_budget = int((_ctx_limit - _req_max - 8000) * (0.82 if (upstream_model or '') == CODE_MODEL_GAS else 1.0))
+    _ctx_budget = int(_ctx_limit - _req_max - 8000)
     messages = _fit_code_context(messages, _ctx_budget)
-    if (upstream_model or '') == CODE_MODEL_VAINILLA:
-        messages = _vainilla_code_messages(messages)
+    if grace:
+        # courtesy margin: tell the agent to wrap up and leave DEIZA_HANDOFF.md (works with every client)
+        _si = next((i for i, m in enumerate(messages) if m.get('role') == 'system'), None)
+        if _si is not None and isinstance(messages[_si].get('content'), str):
+            messages[_si] = dict(messages[_si], content=messages[_si]['content'] + _CODE_GRACE_DIRECTIVE)
+        else:
+            messages.insert(0, {'role': 'system', 'content': _CODE_GRACE_DIRECTIVE.strip()})
+        # and a short reminder on the newest message, the one the model reads last
+        _last = messages[-1] if messages else None
+        if _last and _last.get('role') in ('tool', 'user'):
+            _c = _last.get('content')
+            if isinstance(_c, str):
+                messages[-1] = dict(_last, content=_c + _CODE_GRACE_REMINDER)
+            elif isinstance(_c, list):
+                messages[-1] = dict(_last, content=list(_c) + [{'type': 'text', 'text': _CODE_GRACE_REMINDER.strip()}])
+    _reread_key, _reread_prev = _code_reread_lookup(user_id, messages)
     try:
         max_tokens = int(data.get('max_tokens') or 16384)
     except Exception:
@@ -2228,33 +2478,53 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     }
     if stream:
         payload['stream_options'] = {'include_usage': True}
-    # reasoning effort (desktop Code picker): the Gas and Vainilla models time out with it
+    # reasoning effort (desktop Code picker). Gas always thinks briefly: speed is its whole point.
+    # Solid thinks hard unless the client asks for less.
     _effort = str(data.get('reasoning_effort') or '').strip().lower()
-    if _effort in ('low', 'medium', 'high') and payload['model'] not in (CODE_MODEL_GAS, CODE_MODEL_VAINILLA):
+    if payload['model'] == CODE_MODEL_GAS:
+        payload['reasoning_effort'] = 'low'
+    elif _effort in ('low', 'medium', 'high'):
         payload['reasoning_effort'] = _effort
+    elif payload['model'] == SOLID5_MODEL:
+        payload['reasoning_effort'] = 'high'
     # native function calling (the CLI's tools); passed through untouched
     _tools = data.get('tools')
-    if isinstance(_tools, list) and _tools and (upstream_model or '') != CODE_MODEL_VAINILLA:
+    if isinstance(_tools, list) and _tools:
         payload['tools'] = [t for t in _tools if isinstance(t, dict) and t.get('type') == 'function'][:64]
         if data.get('tool_choice') in ('auto', 'none', 'required') or isinstance(data.get('tool_choice'), dict):
             payload['tool_choice'] = data['tool_choice']
         if isinstance(data.get('parallel_tool_calls'), bool):
             payload['parallel_tool_calls'] = data['parallel_tool_calls']
-    headers = {'Authorization': f'Bearer {CODE_API_KEY}', 'Content-Type': 'application/json'}
+    _up_url, _up_key = _code_upstream(payload['model'])
+    headers = {'Authorization': f'Bearer {_up_key}', 'Content-Type': 'application/json'}
 
-    def _charge(prompt_tokens, completion_tokens, text_len):
-        # The upstream caches prompts, so prompt tokens cost far less than completion tokens.
-        # Scale prompt token deduction so users have generous capacity for multi-turn coding sessions.
-        if tier == 'vainilla':
-            return
+    _prompt_chars = sum(len(str(m.get('content') or '')) for m in messages)
+    _est_prompt = max(_prompt_chars // 4, 1)
+
+    def _charge(prompt_tokens, completion_tokens, text_len, usage_obj=None, reported=True):
         try:
-            comp = int(completion_tokens or 0) or max(text_len // 4, 1)
-            prompt_share = int(prompt_tokens or 0) // 250
-            billed = max(1, comp + prompt_share)
+            from models import usage_units as _uu
+            prompt = int(prompt_tokens or 0)
+            if not prompt:
+                prompt = _est_prompt
+            comp = int(completion_tokens or 0)
+            if not comp:
+                comp = max(text_len // 4, 1)
+            cached = 0
+            try:
+                cached = int(((usage_obj or {}).get('prompt_tokens_details') or {}).get('cached_tokens') or 0)
+            except Exception:
+                cached = 0
+            reread = 0 if cached else min(_reread_prev, prompt)
+            billed = max(1, _uu(prompt=prompt, completion=comp, cached=cached, reread=reread))
             _u = _User.query.get(user_id)
             if _u:
                 _u.record_usage(billed, tier or 'code')
                 db.session.commit()
+                logger.info(f'Omniscient usage units={billed} (prompt={prompt}, cached={cached}, reread={reread}, comp={comp}) '
+                            f'user={user_id} tier={tier} grace={grace} reported={reported}')
+            if reported:
+                _code_reread_store(_reread_key, messages, prompt)
         except Exception as _fe:
             db.session.rollback()
             logger.warning(f'Omniscient token record failed: {_fe}')
@@ -2266,30 +2536,62 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     _prompt_chars = sum(len(json.dumps(m)) for m in messages) if isinstance(messages, list) else 0
 
     def _open_upstream():
+        nonlocal _up_url, headers
+        global _solid_cooldown_until
+        now = time.time()
+        orig_model = payload.get('model')
+
+        # Fast failover if Solid 5 is in cooldown
+        if orig_model == SOLID5_MODEL and now < _solid_cooldown_until:
+            payload['model'] = SOLID5_FALLBACK_MODEL
+
+        # Multi-tier resilient cascade: never fail long sessions
+        candidates = [payload['model']]
+        if orig_model == SOLID5_MODEL:
+            if SOLID5_FALLBACK_MODEL not in candidates:
+                candidates.append(SOLID5_FALLBACK_MODEL)
+            if CODE_MODEL_LIQUID not in candidates:
+                candidates.append(CODE_MODEL_LIQUID)
+        elif payload['model'] == SOLID5_FALLBACK_MODEL:
+            if CODE_MODEL_LIQUID not in candidates:
+                candidates.append(CODE_MODEL_LIQUID)
+
         last = None
-        for _attempt in range(3):
-            if _attempt:
-                time.sleep(1.2 * _attempt)
-            try:
-                r = _rq.post(CODE_API_URL, headers=headers, json=payload, stream=bool(stream), timeout=(30, 300))
-            except Exception as e:
-                last = ('unreachable', str(e)[:200])
-                logger.warning(f'Code upstream unreachable (attempt {_attempt + 1}) user={user_id} model={model_id}: {e}')
-                continue
-            if r.status_code == 200:
-                return r, None
-            body = ''
-            try:
-                body = r.text[:300]
-            except Exception:
-                pass
-            last = (r.status_code, body)
-            logger.warning(f'Code upstream HTTP {r.status_code} (attempt {_attempt + 1}) user={user_id} model={model_id} prompt_chars={_prompt_chars}: {body}')
-            if r.status_code == 400 and 'context length' in body:
-                payload['messages'] = _fit_code_context(payload['messages'], int(_ctx_budget * (0.7 if _attempt == 0 else 0.5)))
-                continue
-            if r.status_code not in (408, 409, 429, 500, 502, 503, 504, 529):
-                break
+        for cand in candidates:
+            payload['model'] = cand
+            cand_url, cand_key = _code_upstream(cand)
+            cand_headers = {'Authorization': f'Bearer {cand_key}', 'Content-Type': 'application/json'}
+            max_cand_attempts = 2 if cand != candidates[-1] else 3
+            for _attempt in range(max_cand_attempts):
+                if _attempt:
+                    time.sleep(min(6.0, 1.5 * (_attempt + 1)))
+                try:
+                    r = _rq.post(cand_url, headers=cand_headers, json=payload, stream=bool(stream), timeout=(30, 300))
+                except Exception as e:
+                    last = ('unreachable', str(e)[:200])
+                    logger.warning(f'Code upstream unreachable ({cand} attempt {_attempt + 1}) user={user_id}: {e}')
+                    continue
+                if r.status_code == 200:
+                    if cand != orig_model:
+                        logger.warning(f'Code upstream {orig_model} unavailable; successfully served by fallback {cand} user={user_id}')
+                    return r, None
+                body = ''
+                try:
+                    body = r.text[:300]
+                except Exception:
+                    pass
+                last = (r.status_code, body)
+                logger.warning(f'Code upstream HTTP {r.status_code} ({cand} attempt {_attempt + 1}) user={user_id} prompt_chars={_prompt_chars}: {body}')
+                if r.status_code == 400 and 'context length' in body:
+                    payload['messages'] = _fit_code_context(payload['messages'], int(_ctx_budget * (0.7 if _attempt == 0 else 0.5)))
+                    continue
+                if r.status_code == 429:
+                    if cand == SOLID5_MODEL:
+                        with _SOLID_COOLDOWN_LOCK:
+                            _solid_cooldown_until = time.time() + 30.0
+                        break  # switch immediately to next candidate
+                if r.status_code not in (408, 409, 429, 500, 502, 503, 504, 529):
+                    break
         return None, last
 
     resp, _fail = _open_upstream()
@@ -2317,7 +2619,7 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
         except Exception:
             pass
         usage = up.get('usage') or {}
-        _charge(usage.get('prompt_tokens'), usage.get('completion_tokens'), len(text))
+        _charge(usage.get('prompt_tokens'), usage.get('completion_tokens'), len(text), usage)
         _out_msg = {'role': 'assistant', 'content': text}
         if _msg.get('tool_calls'):
             _out_msg['tool_calls'] = _msg['tool_calls']
@@ -2327,6 +2629,7 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
             'choices': [{'index': 0, 'message': _out_msg, 'finish_reason': _finish}],
             'usage': {'prompt_tokens': usage.get('prompt_tokens', 0), 'completion_tokens': usage.get('completion_tokens', 0),
                       'total_tokens': usage.get('total_tokens', 0)},
+            'deiza_usage_state': 'grace' if grace else 'ok',
         })
 
     def _generate():
@@ -2336,6 +2639,8 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
         finish = None
         attempts = 1
         up = resp
+        if grace:
+            yield ': deiza-usage {"state": "grace"}\n\n'
         while True:
           upstream_error = None
           up.encoding = 'utf-8'   # text/event-stream has no charset: requests would decode as latin-1
@@ -2383,6 +2688,9 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
                 up.close()
             except Exception:
                 pass
+            # the client stopped (Esc, closed the app): what was generated still cost it
+            if text_len or usage:
+                _charge(usage.get('prompt_tokens'), usage.get('completion_tokens'), text_len, usage, reported=bool(usage))
             return
           except Exception as e:
             upstream_error = {'message': f'stream: {e}'}
@@ -2402,7 +2710,7 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
               attempts += 1
               nxt = None
               try:
-                  nxt = _rq.post(CODE_API_URL, headers=headers, json=payload, stream=True, timeout=(30, 300))
+                  nxt = _rq.post(_code_upstream(payload['model'])[0], headers={'Authorization': f"Bearer {_code_upstream(payload['model'])[1]}", 'Content-Type': 'application/json'}, json=payload, stream=True, timeout=(30, 300))
               except Exception as e:
                   logger.warning(f'Code upstream unreachable on retry user={user_id}: {e}')
               if nxt is not None and nxt.status_code == 200:
@@ -2418,16 +2726,21 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
               yield f"data: {json.dumps({'error': {'message': 'Respuesta interrumpida: se perdió la conexión con Deiza Code (503). Reintentando.', 'type': 'server_error'}})}\n\n"
           break
         if text_len or usage:
-            _charge(usage.get('prompt_tokens'), usage.get('completion_tokens'), text_len)
+            _charge(usage.get('prompt_tokens'), usage.get('completion_tokens'), text_len, usage, reported=bool(usage))
         logger.info(f'Code completion user={user_id} model={model_id} attempts={attempts} useful={useful} finish={finish} '
                     f'prompt_tokens={usage.get("prompt_tokens")} completion_tokens={usage.get("completion_tokens")} secs={time.time() - _t0:.1f}')
+        _uc = _code_usage_comment(user_id)
+        if _uc:
+            yield _uc
         yield 'data: [DONE]\n\n'
 
     return Response(stream_with_context(_generate()), mimetype='text/event-stream', headers={
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, X-Auth-Token, Authorization, X-Api-Key',
+        'Access-Control-Expose-Headers': 'X-Deiza-Usage-State',
         'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no',
+        'X-Deiza-Usage-State': 'grace' if grace else 'ok',
     })
 
 
@@ -2455,17 +2768,18 @@ def code_chat_completions():
         tier = 'code'
 
     can_use, reason = user_obj.can_use_model_with_sublimit(tier)
-    usage = user_obj.get_current_usage()
-    if tier != 'vainilla' and not can_use:
+    _allowed, usage = user_obj.usage_gate()
+    if not can_use:
         if reason == 'model_sublimit':
             return jsonify({'error': 'model_sublimit', 'model': raw_model, 'plan': user_obj.get_plan(), 'usage': usage}), 429
         return jsonify({'error': 'plan_required', 'model': raw_model, 'plan': user_obj.get_plan()}), 403
-    if tier != 'vainilla' and usage['exhausted']:
-        return jsonify({'error': 'usage_limit', 'usage': usage}), 429
+    if not _allowed:
+        return jsonify({'error': 'usage_limit', 'usage': usage, 'message': _usage_limit_message(usage)}), 429
 
     stream = bool(data.get('stream', False))
     created = int(time.time())
-    return _omniscient_completions(user_id, data, stream, raw_model, created, upstream_model=upstream_model, tier=tier)
+    return _omniscient_completions(user_id, data, stream, raw_model, created, upstream_model=upstream_model, tier=tier,
+                                   grace=usage.get('state') == 'grace')
 
 
 
@@ -2752,7 +3066,7 @@ def send_message():
     if len(message) > 32000:
         return jsonify({'error': 'Message too long (max 32000 characters)'}), 400
 
-    if model not in ('fast', 'pro', 'ultra', 'vainilla'):
+    if model not in ('fast', 'pro', 'ultra'):
         return jsonify({'error': 'Invalid model. Use "fast", "pro" or "ultra".'}), 400
 
     # Plan + sub-limit check
@@ -2765,7 +3079,7 @@ def send_message():
             if reason == 'model_sublimit':
                 return jsonify({'error': 'model_sublimit', 'model': model, 'plan': user_obj.get_plan(), 'usage': usage}), 429
             return jsonify({'error': 'plan_required', 'model': model, 'plan': user_obj.get_plan()}), 403
-        if usage['exhausted'] and model != 'vainilla':
+        if usage['exhausted']:
             return jsonify({'error': 'usage_limit', 'usage': usage}), 429
 
     try:
@@ -4315,7 +4629,7 @@ def design_video():
     """Deiza Design — generate or edit a short video clip (omni model).
     Paid plans only; video consumes a lot of quota, so the frontend warns first."""
     from models import User as _VideoUser
-    from models import IMAGE_RAW_COST as _VideoCost
+    from models import VIDEO_CLIP_COST as _VideoCost
     user_id = session.get('user_id')
     data = request.json or {}
     prompt = (data.get('prompt') or '').strip()
@@ -4428,7 +4742,7 @@ def _resolve_studio_images(items):
 
 def _run_design_video_job(job_id, user_id, spec, language):
     """Background worker: generate the image or clip(s), assemble, persist, charge usage."""
-    from models import User as _JobUser, IMAGE_RAW_COST as _ClipCost
+    from models import User as _JobUser, IMAGE_RAW_COST as _ClipCost, VIDEO_CLIP_COST as _VideoClipCost
     scenes = spec.get('scenes') or []
     n = len(scenes)
 
@@ -4499,7 +4813,7 @@ def _run_design_video_job(job_id, user_id, spec, language):
             try:
                 u = _JobUser.query.get(user_id)
                 if u:
-                    u.record_usage(_ClipCost * max(1, done_clips), 'design')
+                    u.record_usage(_VideoClipCost * max(1, done_clips), 'design')
                     db.session.commit()
             except Exception as _ue:
                 logger.warning(f'Design video usage record failed: {_ue}')

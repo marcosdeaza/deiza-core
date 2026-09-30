@@ -357,9 +357,9 @@ textarea {
   object-fit: contain;
   opacity: 0.025;
   mix-blend-mode: multiply;
-  animation: rose-pulse 20s ease-in-out infinite;
-  /* GPU-accelerate to avoid layout thrashing */
-  will-change: transform, opacity;
+  /* Static on purpose: at 2-3 % opacity the motion was invisible, but the composer and the
+     sidebar blur what is behind them, and an endless animation under them made the GPU
+     re-blur every frame (about 30 % CPU at idle and laggy typing in the desktop app). */
 }
 .dark .ambient-rose img {
   mix-blend-mode: normal;
@@ -769,8 +769,31 @@ html.native *:focus-visible { outline: none; box-shadow: none; }
 }
 
 /* Desktop app update button (same soft blue light as the app's own button) */
-.deiza-upd-light { width: 8px; height: 8px; border-radius: 9999px; flex: none; background: hsl(205 88% 64%); animation: deiza-upd-glow 2.4s ease-in-out infinite; }
+.deiza-upd-light { width: 8px; height: 8px; border-radius: 9999px; flex: none; background: hsl(205 88% 64%); animation: deiza-upd-glow 2.4s ease-in-out 4; }
 .deiza-upd-light.is-error { background: hsl(var(--destructive)); animation: none; }
 @keyframes deiza-upd-glow { 0%, 100% { box-shadow: 0 0 3px 0 hsl(205 88% 64% / .7); } 50% { box-shadow: 0 0 10px 3px hsl(205 88% 64% / .45); } }
 .deiza-upd-ring { width: 13px; height: 13px; border-radius: 9999px; flex: none; background: conic-gradient(hsl(205 88% 64%) calc(var(--p) * 1%), hsl(var(--foreground) / .15) 0); -webkit-mask: radial-gradient(circle, transparent 3.5px, #000 4px); mask: radial-gradient(circle, transparent 3.5px, #000 4px); }
 @media (prefers-reduced-motion: reduce) { .deiza-upd-light { animation: none; } }
+
+/* ── KaTeX mathematical rendering & responsive overflow ── */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.6em 0;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+.katex-display > .katex {
+  max-width: 100%;
+  text-align: center;
+}
+.katex {
+  font-size: 1.05em;
+  text-rendering: auto;
+}
+.katex-error {
+  color: inherit !important;
+  background: rgba(239, 68, 68, 0.08) !important;
+  border-radius: 4px;
+  padding: 1px 4px;
+}

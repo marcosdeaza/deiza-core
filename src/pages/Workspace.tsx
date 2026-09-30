@@ -30,6 +30,8 @@ import ActionSheet from '@/components/deiza/ActionSheet';
 import ConfirmDialog from '@/components/deiza/ConfirmDialog';
 import SidebarContent from '@/components/deiza/SidebarContent';
 import AnnouncementModal, { announcementSeen, markAnnouncementSeen } from '@/components/deiza/AnnouncementModal';
+import Solid5Modal, { solid5Seen, markSolid5Seen } from '@/components/deiza/Solid5Modal';
+import CapuSprite from '@/components/deiza/CapuSprite';
 import { desktopBridge, isDesktopApp } from '@/lib/desktop';
 import { type ModelKey } from '@/components/deiza/ModelSelector';
 import { useKeyboardAvoid } from '@/hooks/useKeyboardAvoid';
@@ -46,6 +48,8 @@ interface Message {
   attachedFiles?: Array<{ name: string; mime_type?: string; is_image?: boolean; raw_bytes?: string; url?: string }>;
   images?: Array<{ url: string; alt: string; source?: string; caption?: string }>;
   sources?: Array<{ title: string; url: string; domain: string }>;
+  /** Usage ran out during this answer: Markdown handoff (courtesy margin) */
+  handoff?: { name: string; url?: string; content: string };
   /** Inline error card (kept in the thread so the user's message never vanishes) */
   error?: boolean;
   retryOf?: string;
@@ -208,7 +212,21 @@ const Workspace = () => {
     }
   };
   const [userPlan, setUserPlan] = useState<string>('free');
-  const [planUsage, setPlanUsage] = useState<{ tokens_used: number; token_limit: number; tokens_remaining: number; next_reset: string; reset_in_seconds?: number; exhausted: boolean } | null>(null);
+  const [planUsage, setPlanUsage] = useState<{
+    tokens_used: number;
+    token_limit: number;
+    tokens_remaining: number;
+    next_reset: string;
+    reset_in_seconds?: number;
+    exhausted: boolean;
+    weekly_used?: number;
+    weekly_limit?: number;
+    weekly_remaining?: number;
+    weekly_pct?: number;
+    weekly_exhausted?: boolean;
+    /** ok | warning | grace (courtesy margin while finishing work) | exhausted */
+    state?: string;
+  } | null>(null);
   // Monotonic deadline for the usage countdown — immune to wrong device clocks
   const resetDeadlineRef = useRef(0);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
@@ -346,10 +364,23 @@ const Workspace = () => {
     else navigate('/code');
   }, [userPlan, navigate, t]);
 
+  // One-time launch note for Solid 5. It goes first; the desktop note waits for a later visit.
+  const [solid5Open, setSolid5Open] = useState(false);
+  const solid5ShownRef = useRef(false);
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) return;
+    if (solid5Seen(user.id)) return;
+    solid5ShownRef.current = true;
+    const id = setTimeout(() => setSolid5Open(true), 900);
+    return () => clearTimeout(id);
+  }, [isAuthenticated, user?.id]);
+  const closeSolid5 = useCallback(() => { markSolid5Seen(user?.id); setSolid5Open(false); }, [user?.id]);
+
   // One-time launch note (Deiza for desktop) for accounts opening the workspace after the release
   const [announceOpen, setAnnounceOpen] = useState(false);
   useEffect(() => {
     if (!isAuthenticated || !user?.id) return;
+    if (solid5ShownRef.current || !solid5Seen(user.id)) return;
     if (announcementSeen(user.id)) return;
     const id = setTimeout(() => setAnnounceOpen(true), 900);
     return () => clearTimeout(id);
@@ -360,13 +391,13 @@ const Workspace = () => {
   const [codeBannerOpen, setCodeBannerOpen] = useState(false);
   useEffect(() => {
     try {
-      if (localStorage.getItem('deiza:announce:deiza-code-banner') === '1') return;
+      if (localStorage.getItem('deiza:announce:capu-2026-10') === '1') return;
       const timer = setTimeout(() => setCodeBannerOpen(true), 1500);
       return () => clearTimeout(timer);
     } catch {}
   }, []);
   const closeCodeBanner = useCallback(() => {
-    try { localStorage.setItem('deiza:announce:deiza-code-banner', '1'); } catch {}
+    try { localStorage.setItem('deiza:announce:capu-2026-10', '1'); } catch {}
     setCodeBannerOpen(false);
   }, []);
 
@@ -613,6 +644,7 @@ const Workspace = () => {
           attachedFiles: Array.isArray(msg.attachments) && msg.attachments.length > 0 ? msg.attachments : undefined,
           sources: msg.meta?.sources?.length ? msg.meta.sources : undefined,
           images: msg.meta?.images?.length ? msg.meta.images : undefined,
+          handoff: msg.meta?.handoff?.content ? msg.meta.handoff : undefined,
           fromHistory: true,
         };
       });
@@ -926,7 +958,9 @@ const artifactMarker = latestRaw.indexOf('```artifact');
   }, [haptic]);
 
   const handleSend = (content: string, files: any[] = []) => {
-    if (!content.trim()) return;
+    const trimmed = content.trim();
+    if (!trimmed && (!files || files.length === 0)) return;
+    const finalContent = trimmed || (files.some((f: any) => f.is_image || (f.mime_type || '').startsWith('image/')) ? 'Describe o analiza esta imagen' : 'Analiza los archivos adjuntos');
     if (isStreamingRef.current) return; // Prevent double-send while streaming
     isStreamingRef.current = true; // Lock immediately — before any async work
     setStreamingThinkingSteps([]);
@@ -947,7 +981,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     const userMessage: Message = {
       id: Date.now(),
       role: 'user',
-      content,
+      content: finalContent,
       attachedFiles: files.length > 0 ? files.map(f => ({
         name: f.name,
         mime_type: f.mime_type,
@@ -959,7 +993,8 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     streamingMsgIdRef.current = streamingId;
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
-    lastUserMessageRef.current = content;
+    lastUserMessageRef.current = finalContent;
+    try { localStorage.removeItem('deiza:composer_draft'); } catch {}
     setRestoredInput('');
     streamingRawContentRef.current = '';
     autoArtifactOpenedRef.current = false;
@@ -1057,8 +1092,8 @@ const artifactMarker = latestRaw.indexOf('```artifact');
       return;
     }
 
-    // Authenticated streaming — check plan limits first (Vainilla is unlimited fallback)
-    if (planUsage?.exhausted && model !== 'vainilla') {
+    // Authenticated streaming — check plan limits first
+    if (planUsage?.exhausted && planUsage?.state !== 'grace') {
       nativeHaptic('warning');
       toast.error(
         t('ws.err.limit'),
@@ -1184,6 +1219,9 @@ const artifactMarker = latestRaw.indexOf('```artifact');
           errMsg = t('ws.err.sublimit', { model: `DZ-${subTier}`, plan: userPlan, time: fmtLeft(secsLeft) });
         } else if (errKey === 'usage_limit' || err?.includes('429')) {
           errMsg = t('ws.err.usage', { plan: userPlan, time: fmtLeft(secsLeft) });
+          if (userPlan === 'free') {
+            errMsg += '\n\n💡 [Ver planes Friend y Signet](/plans)';
+          }
         }
         if (errMsg) {
           setMessages(prev => [...prev.filter(m => m.id !== streamingId && m.id !== userMessage.id), {
@@ -1244,6 +1282,11 @@ const artifactMarker = latestRaw.indexOf('```artifact');
         try { localStorage.setItem('deiza:activeChatId', String(newId)); } catch {}
         markProcessing(newId, true);
         void loadChats();
+      },
+      (handoff) => {
+        setMessages(prev => prev.map(m =>
+          m.id === streamingId ? { ...m, handoff } : m
+        ));
       },
     );
     // Refresh usage after message
@@ -1460,7 +1503,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
       setCurrentChatId(chatId);
       // Restore the model that was last used in this chat
       const savedModel = localStorage.getItem(`deiza_model_${chatId}`) as ModelKey | null;
-      if (savedModel && ['gas', 'liquid', 'solid', 'vainilla'].includes(savedModel)) {
+      if (savedModel && ['gas', 'liquid', 'solid'].includes(savedModel)) {
         setModelState(savedModel);
       }
       setActiveProjectId(chats.find(c => c.id === chatId)?.project_id ?? null);
@@ -1477,6 +1520,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
           // Restore web search sources + images so they survive reload
           sources: msg.meta?.sources?.length ? msg.meta.sources : undefined,
           images: msg.meta?.images?.length ? msg.meta.images : undefined,
+          handoff: msg.meta?.handoff?.content ? msg.meta.handoff : undefined,
           fromHistory: true,
         };
       });
@@ -1718,6 +1762,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                   images={msg.images}
                   onArtifactClick={msg.artifact ? () => handleArtifactClick(msg.artifact!) : undefined}
                   sources={msg.sources}
+                  handoff={msg.handoff}
                   onShare={msg.role === 'assistant' && !isDemoMode ? () => handleShareMessage(msg.id) : undefined}
                   canListen={!isDemoMode}
                   canReply={msgIdx === messages.length - 1 && !isLoading}
@@ -1850,6 +1895,16 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     <div className="h-[100dvh] w-full flex bg-background relative overflow-hidden">
       <AmbientRose />
       <NameSetupDialog open={showNameDialog} onClose={handleNameDialogClose} />
+      <Solid5Modal
+        open={solid5Open && !showNameDialog}
+        onClose={closeSolid5}
+        onTry={() => {
+          closeSolid5();
+          if (userPlan === 'free') navigate('/plans');
+          else setModel('solid');
+        }}
+        onReadMore={() => { closeSolid5(); navigate('/noticias?post=solid-5'); }}
+      />
       <AnnouncementModal
         open={announceOpen && !showNameDialog}
         onClose={closeAnnouncement}
@@ -1859,53 +1914,48 @@ const artifactMarker = latestRaw.indexOf('```artifact');
 
       {/* Floating Announcement Toast for Deiza Code */}
       <AnimatePresence>
-        {codeBannerOpen && !announceOpen && !showNameDialog && !inDesktopApp && (
+        {codeBannerOpen && !announceOpen && !solid5Open && !showNameDialog && !inDesktopApp && (
           <motion.div
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 15, scale: 0.95 }}
             transition={{ duration: 0.3, ease: 'easeOut' }}
-            className="fixed bottom-5 right-5 z-50 max-w-sm w-[calc(100vw-2.5rem)] sm:w-96 rounded-2xl border border-[#8C2F39]/40 bg-[#121114]/90 backdrop-blur-xl p-4 shadow-2xl shadow-black/60 text-foreground"
+            className="fixed bottom-5 right-5 z-50 max-w-sm w-[calc(100vw-2.5rem)] sm:w-96 rounded-2xl border border-border/50 bg-card/95 p-4 deiza-shadow-lg text-foreground"
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-[#8C2F39]/20 border border-[#8C2F39]/40 flex items-center justify-center text-[#E17080]">
-                  <Code2 className="w-4 h-4" />
+            <div className="flex items-start gap-3.5">
+              <CapuSprite cycle={['hello', 'typing', 'coffee', 'bloom']} px={1.75} className="shrink-0 -ml-1 -mt-1" label="Capu, la mascota de Deiza Code" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <span className="text-[10px] font-body font-semibold uppercase tracking-[0.16em] text-primary/80">Deiza Code</span>
+                    <h4 className="font-display text-[17px] leading-tight text-foreground mt-0.5">Conoce a Capu</h4>
+                  </div>
+                  <button
+                    onClick={closeCodeBanner}
+                    className="text-muted-foreground/60 hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-white/5"
+                    aria-label="Cerrar"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-                <div>
-                  <span className="text-[10px] font-mono font-semibold uppercase tracking-wider text-[#E17080] bg-[#8C2F39]/20 px-2 py-0.5 rounded-full">
-                    Nuevo Lanzamiento
-                  </span>
-                  <h4 className="font-display font-medium text-sm text-foreground mt-0.5">
-                    Deiza Code (CLI)
-                  </h4>
-                </div>
+                <p className="font-body text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                  La mascota de Deiza Code programa contigo y florece al terminar. Y si se acaba tu uso a mitad de una tarea, Deiza ya no corta: la cierra y te deja el traspaso.
+                </p>
               </div>
-              <button
-                onClick={closeCodeBanner}
-                className="text-muted-foreground/60 hover:text-foreground transition-colors p-1 rounded-lg hover:bg-white/5"
-                aria-label="Cerrar"
-              >
-                <X className="w-4 h-4" />
-              </button>
             </div>
-
-            <p className="font-body text-xs text-muted-foreground mt-2.5 leading-relaxed">
-              Agente autónomo para terminal impulsado en exclusiva por <strong className="text-foreground">Deiza Omniscient (Liquid 5)</strong> en la infraestructura dedicada de Deiza.
-            </p>
 
             <div className="mt-3.5 flex items-center gap-2">
               <button
-                onClick={() => { closeCodeBanner(); navigate('/download'); }}
-                className="flex-1 px-3 py-1.5 rounded-xl bg-[#8C2F39] hover:bg-[#A33844] text-white font-body text-xs font-medium transition text-center shadow-sm"
+                onClick={() => { closeCodeBanner(); navigate('/code'); }}
+                className="flex-1 px-3 py-1.5 rounded-xl bg-primary hover:brightness-110 text-primary-foreground font-body text-xs font-medium transition text-center shadow-sm"
               >
-                Instalar / Comandos
+                Ver Deiza Code
               </button>
               <button
-                onClick={() => { closeCodeBanner(); navigate('/noticias?post=deiza-code-cli'); }}
+                onClick={() => { closeCodeBanner(); navigate('/noticias?post=capu'); }}
                 className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-foreground font-body text-xs transition"
               >
-                Detalles
+                Leer la noticia
               </button>
             </div>
           </motion.div>

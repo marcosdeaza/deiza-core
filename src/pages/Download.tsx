@@ -19,6 +19,7 @@ import {
 import { toast } from 'sonner';
 import logo from '@/assets/logo.png';
 import AmbientRose from '@/components/deiza/AmbientRose';
+import CapuSprite from '@/components/deiza/CapuSprite';
 
 const AppleIcon = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -97,7 +98,10 @@ export default function Download() {
         </header>
 
         {/* Hero Section */}
-        <section className="pt-32 pb-16 px-4 sm:px-6 max-w-5xl mx-auto text-center space-y-6">
+        <section className="pt-28 pb-16 px-4 sm:px-6 max-w-5xl mx-auto text-center space-y-6">
+          <div className="flex justify-center">
+            <CapuSprite cycle={['hello', 'typing', 'coffee', 'can', 'duck', 'bloom']} px={4} label="Capu, la mascota de Deiza Code" />
+          </div>
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
@@ -123,7 +127,7 @@ export default function Download() {
             className="font-body text-base sm:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed"
           >
             El agente de programación autónomo para tu terminal. Impulsado por el modelo{' '}
-            <strong className="text-foreground font-semibold">Deiza Omniscient (Liquid 5)</strong> en la infraestructura dedicada de Deiza para máxima velocidad, diffs quirúrgicos y ejecución segura.
+            <strong className="text-foreground font-semibold">Deiza Omniscient (Liquid 5.1)</strong> en la infraestructura dedicada de Deiza para máxima velocidad, diffs quirúrgicos y ejecución segura.
           </motion.p>
 
           <motion.div
@@ -329,6 +333,50 @@ export default function Download() {
           </div>
         </section>
 
+        {/* Capu + courtesy margin */}
+        <section className="py-12 px-4 sm:px-6 max-w-4xl mx-auto">
+          <div className="rounded-3xl bg-card/80 deiza-border deiza-shadow p-6 sm:p-9">
+            <div className="grid gap-8 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] items-center">
+              <div className="flex justify-center">
+                <CapuSprite cycle={['typing', 'focus', 'reading', 'waiting', 'fine', 'bloom']} px={5} label="Capu trabajando" />
+              </div>
+              <div className="space-y-3 text-left">
+                <span className="block font-mono text-[10px] font-semibold uppercase tracking-wider text-primary">Conoce a Capu</span>
+                <h2 className="font-display text-3xl text-foreground leading-tight">Un capullo de rosa que programa contigo</h2>
+                <p className="font-body text-[15px] leading-relaxed text-muted-foreground">
+                  Capu es la mascota de Deiza Code: un bloque granate con el pétalo izquierdo más alto y dos ojos que son huecos. Mientras el agente trabaja, teclea en su portátil lleno de pegatinas, sopla el café, se echa una lata por el hueco de los pétalos, le explica el bug al pato de goma y espera a que compile. Cuando la tarea termina, florece.
+                </p>
+                <p className="font-body text-[13px] text-muted-foreground/80">
+                  En la terminal te recibe al abrir y saluda con <code className="font-mono text-foreground/90">/capu</code>. En la app de escritorio vive junto a la línea de estado.
+                </p>
+              </div>
+            </div>
+            <div className="mt-8 grid grid-cols-3 sm:grid-cols-6 gap-3">
+              {([['typing', 'Programando'], ['coffee', 'Café'], ['can', 'Lata'], ['duck', 'Pato de goma'], ['waiting', 'Compilando'], ['sleep', 'Durmiendo']] as [string, string][]).map(([scene, label]) => (
+                <figure key={scene} className="rounded-2xl bg-muted/35 px-2 pt-3 pb-2 flex flex-col items-center gap-1.5">
+                  <CapuSprite scene={scene} px={1.5} label={`Capu: ${label}`} />
+                  <figcaption className="font-body text-[11px] text-muted-foreground">{label}</figcaption>
+                </figure>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-3xl bg-card/80 deiza-border p-6 sm:p-8 grid gap-6 sm:grid-cols-[auto_minmax(0,1fr)] items-center">
+            <div className="flex justify-center sm:justify-start">
+              <CapuSprite scene="wilt" px={3} label="Capu escribiendo el traspaso" />
+            </div>
+            <div className="space-y-2.5 text-left">
+              <h3 className="font-display text-2xl text-foreground">Sin cortes a mitad de tarea</h3>
+              <p className="font-body text-[14.5px] leading-relaxed text-muted-foreground">
+                Si tu uso se acaba mientras Deiza está terminando una web, un cálculo o un despliegue, no corta. Sigue con un margen de cortesía, deja el trabajo en un punto estable, hace el guardado o el despliegue de emergencia si la tarea lo pedía y escribe <code className="font-mono text-foreground/90">DEIZA_HANDOFF.md</code>: objetivo, estado, cambios, lo pendiente y un prompt listo para la siguiente sesión o para otra IA.
+              </p>
+              <p className="font-body text-[13px] text-muted-foreground/80">
+                El uso se mide de verdad (contexto, razonamiento y respuesta) y el contexto ocupado está siempre a la vista. En el chat, la última respuesta llega con su traspaso en Markdown listo para descargar.
+              </p>
+            </div>
+          </div>
+        </section>
+
         {/* Model Spotlight: Deiza Omniscient */}
         <section className="py-12 px-4 sm:px-6 max-w-4xl mx-auto">
           <div className="rounded-3xl p-6 sm:p-8 bg-gradient-to-br from-card via-card/80 to-primary/5 deiza-border deiza-shadow space-y-6">
@@ -348,7 +396,7 @@ export default function Download() {
             </div>
 
             <p className="font-body text-sm sm:text-base text-muted-foreground leading-relaxed">
-              A diferencia de los modelos de chat de propósito general, <strong>Deiza Omniscient</strong> está basado en la arquitectura <strong>Deiza Liquid 5</strong> y se aloja en un endpoint exclusivo sobre la <strong>infraestructura dedicada de Deiza</strong>. Diseñado específicamente para razonamiento autónomo profundo, diffs precisos y ejecución local de tareas de programación de alta intensidad.
+              A diferencia de los modelos de chat de propósito general, <strong>Deiza Omniscient</strong> está basado en la arquitectura <strong>Deiza Liquid 5.1</strong> y se aloja en un endpoint exclusivo sobre la <strong>infraestructura dedicada de Deiza</strong>. Diseñado específicamente para razonamiento autónomo profundo, diffs precisos y ejecución local de tareas de programación de alta intensidad.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
@@ -363,7 +411,7 @@ export default function Download() {
 
               <div className="bg-background/60 rounded-2xl p-4 border border-border/40 space-y-1.5">
                 <div className="flex items-center gap-2 text-primary font-body text-xs font-semibold">
-                  <Cpu className="w-4 h-4" /> Motor Liquid 5
+                  <Cpu className="w-4 h-4" /> Motor Liquid 5.1
                 </div>
                 <p className="font-body text-xs text-muted-foreground">
                   Optimizado para diffs quirúrgicos en línea, inspección de árboles de archivos y tests.

@@ -54,7 +54,13 @@ interface UsageData {
   token_limit: number;
   tokens_remaining: number;
   next_reset: string;
+  reset_in_seconds?: number;
   exhausted: boolean;
+  weekly_used?: number;
+  weekly_limit?: number;
+  weekly_remaining?: number;
+  weekly_pct?: number;
+  weekly_exhausted?: boolean;
 }
 
 interface PlanData {
@@ -258,6 +264,30 @@ const Plans = () => {
                 initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ type: 'spring', stiffness: 90, damping: 20, delay: 0.2 }}
               />
             </div>
+            {Boolean(planUsage.weekly_limit && planUsage.weekly_limit > 0) && (
+              <div className="mt-5 pt-4 border-t border-border/20">
+                <div className="flex items-center justify-between text-xs mb-1.5 flex-wrap gap-2">
+                  <span className="font-body font-medium text-foreground/85 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    {t('pl.usage.weekly_title') || 'Cuota semanal (7 días)'}
+                  </span>
+                  <span className="font-mono text-muted-foreground text-[11.5px] tabular-nums">
+                    {fmt.format(planUsage.weekly_used || 0)} / {fmt.format(planUsage.weekly_limit)} tokens ({planUsage.weekly_pct || 0}%)
+                  </span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-muted/60 overflow-hidden">
+                  <motion.div
+                    className="h-full rounded-full bg-emerald-500"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${Math.min(100, Math.max(0, planUsage.weekly_pct || 0))}%` }}
+                    transition={{ type: 'spring', stiffness: 90, damping: 20, delay: 0.3 }}
+                  />
+                </div>
+                <p className="text-[11px] text-muted-foreground/60 mt-1.5">
+                  {t('pl.usage.weekly_desc') || 'Capacidad semanal ultra-amplia para sesiones intensivas de programación sin interrupciones.'}
+                </p>
+              </div>
+            )}
             {blocked && <p className="mt-3 font-body text-[12px] text-red-300/90">{t('pl.usage.blocked')}</p>}
           </motion.section>
         )}
@@ -392,10 +422,12 @@ const Plans = () => {
               </thead>
               <tbody>
                 {([
-                  [t('pl.cmp.models'), 'Gas 4.5 · Liquid 5', '+ Solid 4.6', '+ Solid 4.6'],
-                  [t('pl.cmp.tokens'), '20k', '100k', '300k'],
-                  [t('pl.cmp.solid'), '—', '—', '✓'],
-                  [t('pl.cmp.images'), '~3', '~16', '~50'],
+                  [t('pl.cmp.models'), 'Gas 4.5 · Liquid 5.1', 'Gas · Liquid · Solid 5', 'Todos + Solid 5 Ilimitado'],
+                  [t('pl.cmp.tokens'), '300k', '3M', '8M'],
+                  [t('pl.cmp.weekly'), '1.5M', '24M', '80M'],
+                  [t('pl.cmp.grace'), '✓', '✓', '✓'],
+                  [t('pl.cmp.solid'), '—', '✓ Completo', '✓ Ilimitado'],
+                  [t('pl.cmp.images'), '~3', '~20', '~60'],
                   [t('pl.cmp.editing'), '—', '✓', '✓'],
                   [t('pl.cmp.api'), '—', '✓', '✓'],
                   [t('pl.cmp.projects'), '1 · 5', '5 · 20', '25 · 50'],

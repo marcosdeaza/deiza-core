@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search as SearchIcon, ChevronRight, ArrowRight, ArrowUpRight, Plus,
   Menu, MessageSquare, Trash2, Pin, PinOff, X, PanelLeftClose, Globe, ImagePlus,
-  Share2,
+  Share2, Pencil, MoreVertical, ExternalLink, Check, Zap, Sparkles
 } from 'lucide-react';
 import { toast } from 'sonner';
 import logo from '@/assets/logo.png';
@@ -13,6 +13,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { api } from '@/services/api';
 import { WebImageGrid } from '@/components/deiza/ChatMessage';
 import AudioRecorder from '@/components/deiza/AudioRecorder';
+import ActionSheet from '@/components/deiza/ActionSheet';
 import { authHeaders } from '@/services/api';
 import { haptic } from '@/lib/native';
 
@@ -23,6 +24,7 @@ interface WebResult {
   title: string;
   url: string;
   domain: string;
+  is_indexed?: boolean;
 }
 
 interface RealtimeData {
@@ -51,6 +53,7 @@ interface SearchTurn {
   directLink?: { url: string; domain: string };
   data?: RealtimeData | null;
   images?: Array<{ url: string; title?: string; source?: string }>;
+  model?: string;
   timestamp: number;
 }
 
@@ -300,6 +303,38 @@ export default function DeizaSearch() {
   });
   const [showIndexModal, setShowIndexModal] = useState(false);
   const [indexInput, setIndexInput] = useState('');
+
+  // ─── Sidebar Actions & Mobile Long-Press ───
+  const [sheetConvo, setSheetConvo] = useState<SearchConversation | null>(null);
+  const [editingConvoId, setEditingConvoId] = useState<string | null>(null);
+  const [editingConvoTitle, setEditingConvoTitle] = useState('');
+  const chatLpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chatLpStart = useRef<{ x: number; y: number } | null>(null);
+
+  const chatLongPressHandlers = (c: SearchConversation) => ({
+    onTouchStart: (e: React.TouchEvent) => {
+      const t = e.touches[0];
+      chatLpStart.current = { x: t.clientX, y: t.clientY };
+      chatLpTimer.current = setTimeout(() => {
+        chatLpTimer.current = null;
+        try { navigator.vibrate?.(12); } catch {}
+        haptic('medium');
+        setSheetConvo(c);
+      }, 420);
+    },
+    onTouchMove: (e: React.TouchEvent) => {
+      if (!chatLpStart.current || !chatLpTimer.current) return;
+      const t = e.touches[0];
+      if (Math.abs(t.clientX - chatLpStart.current.x) > 10 || Math.abs(t.clientY - chatLpStart.current.y) > 10) {
+        clearTimeout(chatLpTimer.current);
+        chatLpTimer.current = null;
+      }
+    },
+    onTouchEnd: () => {
+      if (chatLpTimer.current) { clearTimeout(chatLpTimer.current); chatLpTimer.current = null; }
+    },
+  });
+
   const onVoiceTranscript = useCallback((text: string) => {
     const clean = text.trim();
     if (!clean) return;
@@ -532,6 +567,7 @@ export default function DeizaSearch() {
           role: 'assistant',
           content: '',
           directLink: { url: data.direct_link.url, domain: data.direct_link.domain },
+          model: data.model || 'gas-4.5',
           timestamp: Date.now(),
         });
       } else {
@@ -539,6 +575,7 @@ export default function DeizaSearch() {
           title: s.title || s.domain || '',
           url: s.url,
           domain: s.domain || s.url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0],
+          is_indexed: !!s.is_indexed,
         }));
         const error = data.error;
         const primary = data.primary_site || null;
@@ -550,6 +587,7 @@ export default function DeizaSearch() {
           data: data.data || null,
           directLink: primary ? { url: primary.url, domain: primary.domain || '' } : undefined,
           images: (data.images || []).filter((im: any) => im && im.url).slice(0, 6),
+          model: data.model || (files.length > 0 ? 'liquid-5.1' : 'gas-4.5'),
           timestamp: Date.now(),
         });
       }
@@ -593,7 +631,37 @@ export default function DeizaSearch() {
   };
 
   const togglePin = (id: string) => {
-    setConversations(prev => prev.map(c => c.id === id ? { ...c, pinned: !c.pinned } : c));
+    setConversations(prev => prev.map(c => {
+      if (c.id === id) {
+        const updated = { ...c, pinned: !c.pinned };
+        saveConvo(updated);
+        return updated;
+      }
+      return c;
+    }));
+  };
+
+  const startRename = (c: SearchConversation) => {
+    setEditingConvoId(c.id);
+    setEditingConvoTitle(c.title || '');
+  };
+
+  const saveRename = (id: string) => {
+    const title = editingConvoTitle.trim();
+    if (!title) {
+      setEditingConvoId(null);
+      return;
+    }
+    setConversations(prev => prev.map(c => {
+      if (c.id === id) {
+        const updated = { ...c, title };
+        saveConvo(updated);
+        return updated;
+      }
+      return c;
+    }));
+    setEditingConvoId(null);
+    toast.success('Búsqueda renombrada');
   };
 
   const deleteConvo = (id: string) => {
@@ -604,39 +672,103 @@ export default function DeizaSearch() {
     }
     setConversations(prev => prev.filter(c => c.id !== id));
     if (activeConvoId === id) setActiveConvoId(null);
+    toast.success('Búsqueda eliminada');
   };
 
   const isHome = !activeConvo;
 
-  const convoRow = (c: SearchConversation) => (
-    <div
-      key={c.id}
-      className={`group flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer transition-colors text-[13px] ${
-        activeConvoId === c.id ? 'bg-primary/10 text-foreground' : 'hover:bg-muted/50 text-muted-foreground'
-      }`}
-      onClick={() => {
-        setActiveConvoId(c.id);
-        setSidebarOpen(false);
-        if (window.matchMedia('(min-width: 640px)').matches) setDeskOpen(false);
-      }}
-    >
-      {c.pinned ? <Pin className="w-3.5 h-3.5 shrink-0 text-primary/80" /> : <MessageSquare className="w-3.5 h-3.5 shrink-0 opacity-50" />}
-      <span className="flex-1 truncate">{c.title}</span>
-      <button
-        onClick={(e) => { e.stopPropagation(); togglePin(c.id); }}
-        className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-muted transition-all"
-        title={c.pinned ? t('sr.unpin') : t('sr.pin')}
+  const convoRow = (c: SearchConversation) => {
+    const isEditing = editingConvoId === c.id;
+    const isActive = activeConvoId === c.id;
+
+    return (
+      <div
+        key={c.id}
+        className={`group relative flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer transition-colors text-[13px] select-none ${
+          isActive ? 'bg-primary/10 text-foreground font-medium' : 'hover:bg-muted/50 text-muted-foreground hover:text-foreground'
+        }`}
+        onClick={() => {
+          if (isEditing) return;
+          setActiveConvoId(c.id);
+          setSidebarOpen(false);
+        }}
+        {...chatLongPressHandlers(c)}
       >
-        {c.pinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
-      </button>
-      <button
-        onClick={(e) => { e.stopPropagation(); deleteConvo(c.id); }}
-        className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-muted transition-all"
-      >
-        <Trash2 className="w-3 h-3" />
-      </button>
-    </div>
-  );
+        {c.pinned ? <Pin className="w-3.5 h-3.5 shrink-0 text-primary/80" /> : <MessageSquare className="w-3.5 h-3.5 shrink-0 opacity-50" />}
+
+        {isEditing ? (
+          <div className="flex-1 flex items-center gap-1 min-w-0" onClick={e => e.stopPropagation()}>
+            <input
+              autoFocus
+              value={editingConvoTitle}
+              onChange={e => setEditingConvoTitle(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') saveRename(c.id);
+                if (e.key === 'Escape') setEditingConvoId(null);
+              }}
+              className="flex-1 min-w-0 text-[13px] bg-background border border-primary/40 rounded px-1.5 py-0.5 outline-none text-foreground"
+            />
+            <button
+              onClick={() => saveRename(c.id)}
+              className="p-1 rounded text-primary hover:bg-muted transition-colors shrink-0"
+              title="Guardar"
+            >
+              <Check className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setEditingConvoId(null)}
+              className="p-1 rounded text-muted-foreground hover:bg-muted transition-colors shrink-0"
+              title="Cancelar"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <>
+            <span className="flex-1 truncate">{c.title || t('search.new')}</span>
+
+            {/* Desktop action buttons: visible on active, revealed on hover */}
+            <div className={`hidden sm:flex items-center gap-0.5 shrink-0 transition-opacity ${isActive ? 'opacity-90' : 'opacity-0 group-hover:opacity-90'}`}>
+              <button
+                onClick={(e) => { e.stopPropagation(); startRename(c); }}
+                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-all"
+                title={t('ws.rename') || 'Renombrar'}
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); togglePin(c.id); }}
+                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-all"
+                title={c.pinned ? t('sr.unpin') : t('sr.pin')}
+              >
+                {c.pinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); deleteConvo(c.id); }}
+                className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
+                title={t('ws.delete') || 'Eliminar'}
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+
+            {/* Mobile action button: tap to open ActionSheet */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                haptic('light');
+                setSheetConvo(c);
+              }}
+              className="sm:hidden p-1 rounded hover:bg-muted text-muted-foreground/60 hover:text-foreground shrink-0"
+              title="Gestionar"
+            >
+              <MoreVertical className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
+      </div>
+    );
+  };
 
   const sidebar = (
     <div className="flex flex-col h-full">
@@ -972,32 +1104,48 @@ export default function DeizaSearch() {
                     ) : (
                       <div className="space-y-4 pl-7">
                         {turn.directLink && (
-                          <motion.a
-                            href={turn.directLink.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-3 p-4 rounded-2xl bg-card border border-border/30 hover:border-primary/25 transition-all group shadow-sm hover:shadow-md"
-                            initial={{ scale: 0.97 }}
-                            animate={{ scale: 1 }}
-                            transition={{ type: 'spring', damping: 22, stiffness: 300 }}
+                          <div
+                            onClick={() => window.open(turn.directLink!.url, '_blank', 'noopener,noreferrer')}
+                            className="flex items-center gap-3 p-3.5 sm:p-4 rounded-2xl bg-card border border-border/30 hover:border-primary/25 transition-all group shadow-sm hover:shadow-md cursor-pointer"
                           >
                             <img
                               src={`https://www.google.com/s2/favicons?domain=${turn.directLink.domain}&sz=32`}
                               alt=""
-                              className="w-7 h-7 rounded-lg"
+                              className="w-7 h-7 rounded-lg shrink-0"
                             />
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold truncate">{turn.directLink.domain}</p>
+                              <p className="text-sm font-semibold truncate group-hover:text-primary transition-colors">{turn.directLink.domain}</p>
                               <p className="text-[11px] text-muted-foreground truncate">{turn.directLink.url}</p>
                             </div>
-                            <span className="text-[10px] font-mono text-primary bg-primary/10 px-2.5 py-1 rounded-full shrink-0">
-                              {t('search.open')}
-                            </span>
-                            <ArrowUpRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
-                          </motion.a>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.open(turn.directLink!.url, '_blank', 'noopener,noreferrer');
+                              }}
+                              className="p-1.5 rounded-lg text-muted-foreground/60 hover:text-foreground hover:bg-muted transition-colors shrink-0"
+                              title="Abrir en pestaña nueva"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </button>
+                          </div>
                         )}
 
                         {turn.data && <DataCard data={turn.data} es={es} />}
+
+                        {turn.role === 'assistant' && turn.content && (
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono bg-primary/10 text-primary border border-primary/20">
+                              <Zap className="w-2.5 h-2.5 text-primary" />
+                              {turn.model === 'liquid-5.1' ? 'Deiza Liquid (Visión)' : 'Deiza Gas 4.5'}
+                            </span>
+                            {turn.webResults && turn.webResults.some(w => w.is_indexed) && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                Indexado
+                              </span>
+                            )}
+                          </div>
+                        )}
 
                         {turn.content && (
                           <div className="text-sm leading-relaxed text-foreground/90 whitespace-pre-line">
@@ -1013,20 +1161,23 @@ export default function DeizaSearch() {
 
                         {turn.webResults && turn.webResults.length > 0 && (
                           <div>
-                            <p className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground/50 mb-1.5">
-                              {t('search.sources')}
-                            </p>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <p className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground/50">
+                                {t('search.sources')}
+                              </p>
+                              <span className="text-[9px] font-mono text-muted-foreground/40">
+                                Toca para explorar
+                              </span>
+                            </div>
                             <div className="grid sm:grid-cols-2 gap-1.5">
                               {turn.webResults.map((src, j) => {
                                 const label = src.title && src.title !== src.domain ? src.title : '';
                                 return (
-                                  <a
+                                  <div
                                     key={j}
-                                    href={src.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
+                                    onClick={() => window.open(src.url, '_blank', 'noopener,noreferrer')}
                                     title={src.url}
-                                    className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-card/60 border border-border/25 hover:border-primary/20 hover:bg-card transition-all min-w-0"
+                                    className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-card/60 border border-border/25 hover:border-primary/20 hover:bg-card transition-all min-w-0 cursor-pointer group"
                                   >
                                     <span className="text-[10px] font-mono text-muted-foreground/60 w-3 shrink-0 text-right">{j + 1}</span>
                                     <img
@@ -1036,10 +1187,24 @@ export default function DeizaSearch() {
                                       loading="lazy"
                                     />
                                     <span className="flex-1 min-w-0 leading-tight">
-                                      <span className="block text-[11px] truncate text-foreground/85">{label || src.domain}</span>
-                                      {label && <span className="block text-[10px] truncate text-muted-foreground/70">{src.domain}</span>}
+                                      <span className="block text-[11px] truncate text-foreground/85 group-hover:text-primary transition-colors">{label || src.domain}</span>
+                                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground/70">
+                                        <span className="truncate">{src.domain}</span>
+                                        {src.is_indexed && <span className="text-[9px] text-primary font-mono">• Indexado</span>}
+                                      </span>
                                     </span>
-                                  </a>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.open(src.url, '_blank', 'noopener,noreferrer');
+                                      }}
+                                      className="p-1 rounded opacity-0 group-hover:opacity-100 text-muted-foreground/50 hover:text-foreground hover:bg-muted transition-all shrink-0"
+                                      title="Abrir en pestaña nueva"
+                                    >
+                                      <ExternalLink className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
                                 );
                               })}
                             </div>
@@ -1180,6 +1345,37 @@ export default function DeizaSearch() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* ─── Mobile Long-press / Actions ActionSheet ─── */}
+        <ActionSheet
+          open={!!sheetConvo}
+          onClose={() => setSheetConvo(null)}
+          title={sheetConvo?.title || t('search.title')}
+          cancelLabel="Cancelar"
+          actions={sheetConvo ? [
+            {
+              label: sheetConvo.pinned ? (t('sr.unpin') || 'Desfijar búsqueda') : (t('sr.pin') || 'Fijar búsqueda'),
+              icon: sheetConvo.pinned ? PinOff : Pin,
+              onClick: () => togglePin(sheetConvo.id),
+            },
+            {
+              label: t('ws.rename') || 'Renombrar búsqueda',
+              icon: Pencil,
+              onClick: () => startRename(sheetConvo),
+            },
+            {
+              label: t('sr.share') || 'Compartir búsqueda',
+              icon: Share2,
+              onClick: () => shareConvo(sheetConvo),
+            },
+            {
+              label: t('ws.delete') || 'Eliminar búsqueda',
+              icon: Trash2,
+              destructive: true,
+              onClick: () => deleteConvo(sheetConvo.id),
+            },
+          ] : []}
+        />
       </main>
     </div>
   );

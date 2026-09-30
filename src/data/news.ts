@@ -13,10 +13,81 @@ export interface NewsItem {
   body: { es: string[]; en: string[] };   // paragraphs
   art: NewsArt;
   hero?: string;           // optional artwork path (public/)
+  mural?: { src: string; caption: { es: string; en: string }; after: number };  // wide artwork placed after paragraph `after`
   upcoming?: boolean;
 }
 
 export const NEWS: NewsItem[] = [
+  {
+    id: 'capu',
+    date: '2026-10-01',
+    tag: { es: 'Deiza Code', en: 'Deiza Code' },
+    title: { es: 'Capu, y ninguna tarea a medias', en: 'Capu, and no more half-finished tasks' },
+    excerpt: {
+      es: 'Deiza Code estrena mascota: un capullo de rosa hecho bloque que programa contigo. Y cuando el uso se acaba a mitad de una tarea, Deiza ya no corta: la cierra, deja el trabajo estable y te escribe el traspaso.',
+      en: 'Deiza Code gets a mascot: a rosebud turned into a block that codes alongside you. And when usage runs out mid-task, Deiza no longer cuts off: it wraps up, leaves the work stable and writes you a handoff.',
+    },
+    body: {
+      es: [
+        'Se llama Capu. Es un capullo de rosa reducido a lo mínimo: un bloque granate de ocho píxeles, el pétalo izquierdo más alto que el resto y dos ojos que no son ojos, sino huecos por los que se ve el fondo. Cuando necesita coger algo le brotan dos brazos de hoja. Nada más. Es mono precisamente porque no tiene casi nada.',
+        'Vive donde se programa. En la app de escritorio acompaña al agente junto a la línea de estado: teclea en un portátil lleno de pegatinas mientras Deiza escribe, sopla el café cuando piensa, se echa una lata por el hueco de los pétalos en las sesiones largas, le explica el bug al pato de goma cuando algo falla varias veces, mira la barra de progreso mientras compila y, si todo arde, se sienta a tomarse el café igual. Cuando la tarea termina, florece. En la terminal te recibe al abrir Deiza Code y saluda con /capu.',
+        'Con Capu llega un cambio que importa más que la mascota: ninguna tarea se queda a medias por el límite de uso. Si la cuota se acaba mientras Deiza termina una web, un cálculo o un despliegue, sigue con un margen de cortesía. Deja el trabajo en un punto estable, hace el guardado o el despliegue de emergencia si la tarea lo pedía y escribe DEIZA_HANDOFF.md: objetivo, estado, cambios, lo pendiente y un prompt listo para la siguiente sesión o para otra IA. En el chat, la última respuesta llega con su traspaso en Markdown para descargar.',
+        'También hemos rehecho cómo se mide el uso. Ahora cuenta lo que de verdad cuesta cada respuesta: el contexto que se envía, el razonamiento y el texto, con descuento para lo que el motor ya tenía en caché. Se acabaron los mensajes que no contaban y las conversaciones enteras que movían la barra un 2 %. A cambio, las ventanas son mucho más grandes: Friend da para una tarde larga programando y Signet para casi tres veces eso, con un tope semanal para que dure toda la semana.',
+        'Y el contexto se ve. En Deiza Code para escritorio hay un indicador junto al compositor con los tokens reales de la sesión y la ventana del modelo, y la barra de uso avisa al 85 %, marca el margen de cortesía y enseña la semana.',
+        'Todo está disponible desde hoy: en la web, en Deiza Code 2.3 para la terminal y en la app de escritorio, que se actualiza sola.',
+      ],
+      en: [
+        'Its name is Capu. It is a rosebud reduced to the bare minimum: an eight-pixel garnet block, the left petal taller than the rest, and two eyes that are not eyes but holes you can see the background through. When it needs to hold something, two leaf arms sprout. That is all. It is cute precisely because it has almost nothing.',
+        'It lives where the coding happens. In the desktop app it keeps the agent company next to the status line: it types on a sticker-covered laptop while Deiza writes, blows on its coffee while it thinks, pours a can through the gap between its petals in long sessions, explains the bug to the rubber duck when something fails a few times, watches the progress bar while things compile and, if everything is on fire, sits down with its coffee anyway. When the task is done, it blooms. In the terminal it greets you when Deiza Code opens and says hello with /capu.',
+        'Capu arrives with a change that matters more than the mascot: no task is left half-done because of the usage limit. If the quota runs out while Deiza is finishing a website, a calculation or a deploy, it keeps going with a courtesy margin. It brings the work to a stable point, runs the emergency save or deploy if the task called for it, and writes DEIZA_HANDOFF.md: goal, state, changes, what is left and a prompt ready for the next session or another AI. In chat, the last answer comes with its Markdown handoff to download.',
+        'We also rebuilt how usage is measured. It now counts what each answer really costs: the context that is sent, the reasoning and the text, with a discount for what the engine already had cached. No more messages that did not count, or whole conversations that moved the bar by 2 %. In exchange, the windows are much larger: Friend covers a long afternoon of coding and Signet almost three times that, with a weekly cap so it lasts the whole week.',
+        'And the context is visible. In Deiza Code for desktop there is an indicator next to the composer with the session\'s real tokens and the model\'s window, and the usage bar warns at 85 %, shows the courtesy margin and the week.',
+        'Everything is available today: on the web, in Deiza Code 2.3 for the terminal and in the desktop app, which updates itself.',
+      ],
+    },
+    art: 'code',
+    hero: '/art/capu-hero.svg',
+    mural: {
+      src: '/art/capu-mural.svg',
+      caption: { es: 'Capu programando, con su café, con el pato de goma, concentrado y en llamas pero tranquilo.', en: 'Capu coding, with its coffee, with the rubber duck, focused, and on fire but calm.' },
+      after: 1,
+    },
+  },
+  {
+    id: 'solid-5',
+    date: '2026-09-25',
+    tag: { es: 'Modelo', en: 'Model' },
+    title: { es: 'Solid 5: tallado para pensar', en: 'Solid 5: carved to think' },
+    excerpt: {
+      es: 'El modelo más capaz que ha hecho Deiza. Metódico y preciso, para programar, investigar y resolver lo difícil. Llega hoy al chat y a Deiza Code, junto a Liquid 5.1 y un Gas más rápido que nunca.',
+      en: 'The most capable model Deiza has ever made. Methodical and precise, for coding, research and the hard problems. Available today in chat and Deiza Code, alongside Liquid 5.1 and a faster-than-ever Gas.',
+    },
+    body: {
+      es: [
+        'Solid siempre fue el modelo al que acudir cuando algo importa de verdad. Solid 5 lleva esa idea hasta el final: antes de escribir una línea entiende el problema entero, qué se pide, qué restricciones hay y qué podría salir mal, y solo entonces responde. No rellena, no adorna y no da nada por supuesto.',
+        'Donde más se nota es programando. Solid 5 lee el código con atención, busca la causa real en lugar del síntoma y entrega cambios completos a la primera, señalando los casos límite y cómo comprobarlos. En Deiza Code planifica antes de tocar ningún archivo, usa las herramientas del agente con criterio y revisa su propio trabajo antes de darlo por terminado.',
+        'Investiga como lo haría una persona rigurosa. Cuando un dato puede haber cambiado, lo busca; cuando las fuentes no coinciden, las contrasta; y siempre separa lo verificado de lo que es una estimación. Verás cada búsqueda mientras ocurre y las fuentes quedan enlazadas bajo la respuesta.',
+        'También ve. Puedes darle capturas, diagramas, fotos de una pizarra o una interfaz rota, y razona sobre ellas igual que sobre el texto.',
+        'Con Solid 5 renovamos toda la gama. Liquid pasa a la 5.1 y sigue siendo el modelo para casi todo. Gas estrena motor en Deiza Code y responde varias veces más rápido que antes, ideal para cambios pequeños e iteraciones rápidas. Y Vainilla se retira: quien lo tuviera elegido pasa automáticamente a Gas.',
+        'Solid 5 está disponible desde hoy en el chat y en Deiza Code para los planes Friend y Signet. Y si en algún momento hay mucha demanda, el respaldo por cadena hace que Deiza siga respondiendo.',
+      ],
+      en: [
+        'Solid was always the model to reach for when something really matters. Solid 5 takes that idea all the way: before writing a line it understands the whole problem, what is being asked, what the constraints are and what could go wrong, and only then answers. No padding, no ornament, nothing taken for granted.',
+        'It shows most in programming. Solid 5 reads the code carefully, looks for the actual cause rather than the symptom and delivers complete changes the first time, pointing out edge cases and how to check them. In Deiza Code it plans before touching any file, uses the agent\'s tools with judgement and reviews its own work before calling it done.',
+        'It researches the way a rigorous person would. When a fact may have changed, it looks it up; when sources disagree, it cross-checks them; and it always separates what is verified from what is an estimate. You see each search as it happens, and sources stay linked under the answer.',
+        'It sees, too. Give it screenshots, diagrams, a photo of a whiteboard or a broken interface, and it reasons about them just as it does about text.',
+        'With Solid 5 we are renewing the whole lineup. Liquid moves to 5.1 and remains the model for almost everything. Gas gets a new engine in Deiza Code and answers several times faster than before, ideal for small changes and quick iterations. And Vainilla is retired: anyone who had it selected moves to Gas automatically.',
+        'Solid 5 is available from today in chat and Deiza Code on the Friend and Signet plans. And if demand ever spikes, chain fallback keeps Deiza answering.',
+      ],
+    },
+    art: 'rose',
+    hero: '/art/solid5.webp',
+    mural: {
+      src: '/art/solid5-mural.webp',
+      caption: { es: 'De lo líquido a lo sólido: la rosa de Deiza, tallada en piedra.', en: 'From liquid to solid: the Deiza rose, carved in stone.' },
+      after: 2,
+    },
+  },
   {
     id: 'deiza-escritorio',
     date: '2026-09-22',

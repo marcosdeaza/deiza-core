@@ -165,7 +165,7 @@ export default function CliAuth() {
             </div>
             <div className="pt-2 border-t border-border/30 flex items-center justify-between text-[11px] font-mono text-muted-foreground">
               <span>Motor asignado:</span>
-              <span className="text-primary font-medium">Deiza Code · Liquid 5 · Solid · Gas · Vainilla</span>
+              <span className="text-primary font-medium">Deiza Code · Liquid 5.1 · Solid 5 · Gas</span>
             </div>
           </div>
         )}
@@ -176,7 +176,7 @@ export default function CliAuth() {
               <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Acceso General Habilitado
             </p>
             <p className="font-body text-xs text-muted-foreground leading-relaxed">
-              Tu cuenta tiene acceso a Deiza Code con Liquid 5, Gas 4.5 y Vainilla ilimitado.
+              Tu cuenta tiene acceso a Deiza Code con Liquid 5.1, Solid 5 y Gas 4.5.
             </p>
           </div>
         )}

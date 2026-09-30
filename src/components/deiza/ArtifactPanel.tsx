@@ -7,6 +7,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { authHeaders } from '@/services/api';
 import { isNative, saveOrShareFile, shareText, haptic } from '@/lib/native';
 import 'katex/dist/katex.min.css';
+import { preprocessLaTeX } from '@/lib/latex';
 
 /** Generated PDFs are cached per (name, content) so reopening the panel is instant */
 const PDF_CACHE = new Map<string, Blob>();
@@ -878,7 +879,7 @@ const ArtifactPanel = ({ open, onClose, artifact, inline = false, historyIndex =
           <Suspense fallback={<CodeSkeleton />}>
             <ReactMarkdownLazy
               remarkPlugins={[remarkGfm, remarkMath]}
-              rehypePlugins={[rehypeKatex]}
+              rehypePlugins={[[rehypeKatex, { output: 'htmlAndMathml', strict: false, trust: true }]]}
               components={{
                 /* Sanitize any raw HTML in markdown */
                 html: ({ children }) => (
@@ -904,7 +905,7 @@ const ArtifactPanel = ({ open, onClose, artifact, inline = false, historyIndex =
                 },
               }}
             >
-            {content}
+            {preprocessLaTeX(content)}
           </ReactMarkdownLazy>
           </Suspense>
         </div>

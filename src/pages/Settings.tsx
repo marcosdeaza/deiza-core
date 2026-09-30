@@ -748,7 +748,7 @@ const Settings = () => {
                 icon={<Info className="w-4.5 h-4.5 text-muted-foreground" />}
                 iconBg="bg-muted/50"
                 label="Deiza"
-                sublabel={`${t('st.version')} 5.5 · Liquid 5${native ? ' · iOS' : ''}`}
+                sublabel={`${t('st.version')} 5.5 · Liquid 5.1${native ? ' · iOS' : ''}`}
               />
             </Section>
           </div>

@@ -17,6 +17,13 @@ export interface SidebarUsage {
   token_limit: number;
   tokens_remaining: number;
   exhausted: boolean;
+  weekly_used?: number;
+  weekly_limit?: number;
+  weekly_remaining?: number;
+  weekly_pct?: number;
+  weekly_exhausted?: boolean;
+  /** ok | warning | grace | exhausted */
+  state?: string;
 }
 
 interface SidebarContentProps {
@@ -87,7 +94,8 @@ const SidebarContent = (p: SidebarContentProps) => {
   const pct = p.planUsage && p.planUsage.token_limit > 0
     ? Math.min(100, Math.round((p.planUsage.tokens_used / p.planUsage.token_limit) * 100))
     : 0;
-  const barTone = p.planUsage?.exhausted ? 'bg-red-400' : pct >= 80 ? 'bg-amber-400' : 'bg-primary';
+  const grace = p.planUsage?.state === 'grace';
+  const barTone = grace ? 'bg-deiza-ochre' : p.planUsage?.exhausted ? 'bg-red-400' : pct >= 80 ? 'bg-amber-400' : 'bg-primary';
 
   return (
     <div className="flex flex-col h-full w-full min-h-0">
@@ -253,7 +261,7 @@ const SidebarContent = (p: SidebarContentProps) => {
                 {p.userPlan === 'free' && !native && <span className="text-primary/80 ml-1">· {t('ws.upgrade.short')}</span>}
               </span>
               <span className="font-body text-[10.5px] tabular-nums text-muted-foreground/60">
-                {pct}%{p.resetLabel && pct > 0 ? ` · ${p.resetLabel}` : ''}
+                {grace ? t('ws.usage.grace') : `${pct}%`}{p.resetLabel && pct > 0 ? ` · ${p.resetLabel}` : ''}
               </span>
             </div>
             <div className="w-full h-[3px] rounded-full bg-muted/60 overflow-hidden">
@@ -264,6 +272,25 @@ const SidebarContent = (p: SidebarContentProps) => {
                 transition={{ type: 'spring', stiffness: 120, damping: 20 }}
               />
             </div>
+            {Boolean(p.planUsage.weekly_limit && p.planUsage.weekly_limit > 0) && (
+              <div className="mt-2 pt-1.5 border-t border-border/10">
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground/75 mb-1">
+                  <span className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                    <span>{t('ws.usage.weekly') || 'Semanal'}</span>
+                  </span>
+                  <span className="tabular-nums">
+                    {p.planUsage.weekly_pct ?? 0}% · {p.planUsage.weekly_limit >= 1000000 ? `${Math.round(p.planUsage.weekly_limit / 1000000)}M` : `${Math.round(p.planUsage.weekly_limit / 1000)}k`}
+                  </span>
+                </div>
+                <div className="w-full h-[2.5px] rounded-full bg-muted/40 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-emerald-400/80 transition-all duration-300"
+                    style={{ width: `${Math.min(100, Math.max(0, p.planUsage.weekly_pct || 0))}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </button>
         )}
         <div className="flex items-center gap-2.5 px-1 pt-2">

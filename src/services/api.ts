@@ -476,7 +476,7 @@ class APIService {
   streamMessage(
     message: string,
     chatId: number | undefined,
-    model: 'gas' | 'liquid' | 'solid' | 'liquid45' | 'vainilla' | 'fast' | 'pro' | 'ultra' = 'liquid',
+    model: 'gas' | 'liquid' | 'solid' | 'liquid45' | 'fast' | 'pro' | 'ultra' = 'liquid',
     language: string = 'en',
     onChunk: (chunk: string) => void,
     onDone: (chatId: number, artifact?: any, msgId?: number) => void,
@@ -490,6 +490,8 @@ class APIService {
     projectId?: number | null,
     /** Fired as soon as the server assigns a chat id to a brand-new conversation */
     onChatId?: (chatId: number) => void,
+    /** Usage ran out during this answer: Markdown handoff to continue elsewhere */
+    onHandoff?: (handoff: { name: string; url?: string; content: string }) => void,
   ): () => void {
     const controller = new AbortController();
     let aborted = false;
@@ -556,6 +558,7 @@ class APIService {
               if (parsed.sources && onSources) onSources(parsed.sources);
               if (parsed.chunk) onChunk(parsed.chunk);
               if (parsed.images && onImages) onImages(parsed.images);
+              if (parsed.handoff && onHandoff) onHandoff(parsed.handoff);
               if (parsed.done) { completed = true; clearWatchdog(); onDone(resolvedChatId!, parsed.artifact, parsed.msg_id); return; }
             } catch (parseErr: any) {
               if (parseErr.message && !parseErr.message.includes('JSON')) throw parseErr;

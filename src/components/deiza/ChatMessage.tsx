@@ -10,11 +10,13 @@ import { toast } from 'sonner';
 import useLongPress from '@/hooks/useLongPress';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReadAloudButton from './ReadAloudButton';
+import HandoffCard, { type Handoff } from './HandoffCard';
 import { SlideDeckCard, VideoCard, QuestionCard, extractQuestions } from './InlineMedia';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import { preprocessLaTeX } from '@/lib/latex';
 
 /** Route remote web photos through the server proxy so hotlink-protected and
  * referrer-blocked images always render in chat and search results. */
@@ -168,6 +170,8 @@ interface ChatMessageProps {
   /** Current app mode — in agent/teach, code blocks are always shown as artifact cards */
   mode?: string;
   sources?: Array<{ title: string; url: string; domain: string }>;
+  /** Markdown handoff left when the usage quota ran out during this answer */
+  handoff?: Handoff;
   /** Fade/slide in on mount (off for messages loaded from history, so switching chats does not flash) */
   animateIn?: boolean;
 }
@@ -769,7 +773,7 @@ const ImageLightbox = ({ src, name, onClose }: { src: string; name: string; onCl
   );
 };
 
-const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateArtifact, onShare, isStreaming, attachedFiles, images, mode, sources, messageId, canListen, onQuickReply, canReply, stopped, animateIn = true }: ChatMessageProps) => {
+const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateArtifact, onShare, isStreaming, attachedFiles, images, mode, sources, handoff, messageId, canListen, onQuickReply, canReply, stopped, animateIn = true }: ChatMessageProps) => {
   const { t } = useLanguage();
   const [copied, setCopied] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -878,6 +882,9 @@ const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateA
   // never as a code block. While streaming the block is still partial, so keep it hidden.
   let { text: cleanContent, questions } = extractQuestions(cleanContentRaw.replace(/```question[\s\S]*$/, m => (m.includes('```', 12) ? m : '')));
 
+  // Normalize LaTeX expressions (\[ \], \( \), $$, unwrapped matrices) for KaTeX & remark-math
+  const processedMarkdown = useMemo(() => preprocessLaTeX(cleanContent), [cleanContent]);
+
   // Retroactive fallback: If questions array is empty but this message was saved with an artifact of type question
   const isQuestionArtifact = Boolean(artifact && (artifact.type === 'question' || artifact.name?.endsWith('.question')));
   if (questions.length === 0 && isQuestionArtifact && artifact?.content) {
@@ -906,10 +913,10 @@ const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateA
         <div className="prose-deiza font-body text-[15px] leading-[1.75] sm:text-[15.5px] sm:leading-[1.85] [overflow-wrap:anywhere]" {...longPress}>
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[rehypeKatex]}
+            rehypePlugins={[[rehypeKatex, { output: 'htmlAndMathml', strict: false, trust: true }]]}
             components={mdComponents}
           >
-            {cleanContent}
+            {processedMarkdown}
           </ReactMarkdown>
           {/* Streaming cursor — shown at the very end of content */}
           {isStreaming && <StreamingCursor />}
@@ -925,6 +932,8 @@ const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateA
       {images && images.length > 0 && !isStreaming && (
         <WebImageGrid images={images} />
       )}
+
+      {handoff && handoff.content && <HandoffCard handoff={handoff} />}
 
       {/* Artifact card — during streaming show terminal-style indicator */}
       {artifact && !isQuestionArtifact && (
