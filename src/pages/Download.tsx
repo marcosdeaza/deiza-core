@@ -100,7 +100,7 @@ export default function Download() {
         {/* Hero Section */}
         <section className="pt-28 pb-16 px-4 sm:px-6 max-w-5xl mx-auto text-center space-y-6">
           <div className="flex justify-center">
-            <CapuSprite cycle={['hello', 'typing', 'coffee', 'can', 'duck', 'bloom']} px={4} label="Capu, la mascota de Deiza Code" />
+            <CapuSprite cycle={['hello', 'typing', 'solid', 'coffee', 'npm', 'duck', 'saiyan', 'bloom']} px={4} label="Capu, la mascota de Deiza Code" />
           </div>
           <motion.div
             initial={{ opacity: 0, y: 16 }}
@@ -108,7 +108,7 @@ export default function Download() {
             transition={{ duration: 0.5 }}
             className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary font-mono text-xs font-semibold uppercase tracking-wider"
           >
-            <Sparkles className="w-3.5 h-3.5" /> Beta · Modelo Exclusivo Deiza Omniscient
+            <Sparkles className="w-3.5 h-3.5" /> Solid 5 · 1M tokens de contexto
           </motion.div>
 
           <motion.h1
@@ -126,8 +126,9 @@ export default function Download() {
             transition={{ duration: 0.5, delay: 0.2 }}
             className="font-body text-base sm:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed"
           >
-            El agente de programación autónomo para tu terminal. Impulsado por el modelo{' '}
-            <strong className="text-foreground font-semibold">Deiza Omniscient (Liquid 5.1)</strong> en la infraestructura dedicada de Deiza para máxima velocidad, diffs quirúrgicos y ejecución segura.
+            El agente de programación de Deiza, en tu terminal y en la app de escritorio. Funciona con{' '}
+            <strong className="text-foreground font-semibold">Solid 5</strong>, el modelo más capaz de Deiza: un millón de tokens de contexto para
+            leer tu proyecto entero y sacar aplicaciones completas casi de una sola vez, con diffs quirúrgicos y verificación en cada paso.
           </motion.p>
 
           <motion.div
@@ -377,56 +378,36 @@ export default function Download() {
           </div>
         </section>
 
-        {/* Model Spotlight: Deiza Omniscient */}
+        {/* Model spotlight: Solid 5 */}
         <section className="py-12 px-4 sm:px-6 max-w-4xl mx-auto">
-          <div className="rounded-3xl p-6 sm:p-8 bg-gradient-to-br from-card via-card/80 to-primary/5 deiza-border deiza-shadow space-y-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border/40 pb-6">
+          <div className="rounded-3xl p-6 sm:p-8 bg-card/80 deiza-border deiza-shadow space-y-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4 border-b border-border/40 pb-6">
               <div className="space-y-1">
-                <span className="font-mono text-xs font-semibold text-primary uppercase tracking-wider bg-primary/10 px-2.5 py-1 rounded-full border border-primary/20">
-                  Motor Dedicado Exclusivo
-                </span>
-                <h3 className="font-display text-2xl sm:text-3xl font-bold text-foreground">
-                  Deiza Omniscient <span className="text-muted-foreground font-mono text-sm font-normal">(v5)</span>
-                </h3>
+                <span className="font-mono text-xs font-semibold text-primary uppercase tracking-wider">El modelo de Deiza Code</span>
+                <h3 className="font-display text-3xl sm:text-4xl text-foreground">Solid 5</h3>
               </div>
-              <div className="flex items-center gap-2 bg-emerald-500/10 text-emerald-400 font-mono text-xs font-semibold px-3 py-1.5 rounded-full border border-emerald-500/20">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                Cluster Deiza Activo
-              </div>
+              <p className="font-display text-5xl sm:text-6xl text-foreground tabular-nums leading-none">1M<span className="font-body text-sm text-muted-foreground ml-2 align-middle">tokens de contexto</span></p>
             </div>
 
             <p className="font-body text-sm sm:text-base text-muted-foreground leading-relaxed">
-              A diferencia de los modelos de chat de propósito general, <strong>Deiza Omniscient</strong> está basado en la arquitectura <strong>Deiza Liquid 5.1</strong> y se aloja en un endpoint exclusivo sobre la <strong>infraestructura dedicada de Deiza</strong>. Diseñado específicamente para razonamiento autónomo profundo, diffs precisos y ejecución local de tareas de programación de alta intensidad.
+              Un millón de tokens es un proyecto entero en la cabeza a la vez: el código, la documentación, los tests y la conversación. Solid 5 planifica antes de tocar nada, escribe los archivos completos, ejecuta y comprueba lo que hace, y sigue hasta que funciona. Con esa memoria, una petición bien explicada suele bastar para tener una web, un juego o una herramienta terminados de una vez.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
               <div className="bg-background/60 rounded-2xl p-4 border border-border/40 space-y-1.5">
-                <div className="flex items-center gap-2 text-primary font-body text-xs font-semibold">
-                  <Server className="w-4 h-4" /> Clusters dedicados Deiza
-                </div>
-                <p className="font-body text-xs text-muted-foreground">
-                  Servidores dedicados de cómputo GPU de alta velocidad sin colas de espera.
-                </p>
+                <div className="flex items-center gap-2 text-primary font-body text-xs font-semibold"><Layers className="w-4 h-4" /> Proyectos casi de una vez</div>
+                <p className="font-body text-xs text-muted-foreground">Ve todo el proyecto a la vez y entrega aplicaciones completas con estructura real de archivos.</p>
               </div>
-
               <div className="bg-background/60 rounded-2xl p-4 border border-border/40 space-y-1.5">
-                <div className="flex items-center gap-2 text-primary font-body text-xs font-semibold">
-                  <Cpu className="w-4 h-4" /> Motor Liquid 5.1
-                </div>
-                <p className="font-body text-xs text-muted-foreground">
-                  Optimizado para diffs quirúrgicos en línea, inspección de árboles de archivos y tests.
-                </p>
+                <div className="flex items-center gap-2 text-primary font-body text-xs font-semibold"><Cpu className="w-4 h-4" /> Metódico</div>
+                <p className="font-body text-xs text-muted-foreground">Entiende antes de tocar, busca la causa real de los fallos y verifica cada cambio antes de darlo por bueno.</p>
               </div>
-
               <div className="bg-background/60 rounded-2xl p-4 border border-border/40 space-y-1.5">
-                <div className="flex items-center gap-2 text-primary font-body text-xs font-semibold">
-                  <ShieldAlert className="w-4 h-4" /> Exclusivo Planes de Pago
-                </div>
-                <p className="font-body text-xs text-muted-foreground">
-                  Disponible para cuentas con plan Friend o Signet con consumo de cuota de 5 horas.
-                </p>
+                <div className="flex items-center gap-2 text-primary font-body text-xs font-semibold"><Zap className="w-4 h-4" /> Liquid y Gas cuando quieras</div>
+                <p className="font-body text-xs text-muted-foreground">Liquid 5.1 (256K) para el día a día rápido y Gas 4.5 (128K) para cambios pequeños. Cambias de modelo cuando quieras.</p>
               </div>
             </div>
+            <p className="font-body text-xs text-muted-foreground/70">Incluido en Friend y Signet. Solid gasta algo más de uso que Liquid, pero aprovecha la caché: las sesiones largas salen más baratas de lo que parece.</p>
           </div>
         </section>
 
