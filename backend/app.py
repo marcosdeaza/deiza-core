@@ -238,20 +238,6 @@ _CODE_GRACE_REMINDER = (
     '(objetivo, estado, cambios, pendiente con - [ ], cómo continuar con un prompt listo para pegar).]'
 )
 
-_CODE_COMPUTER_DIRECTIVE = (
-    '\n\n[DEIZA · CONTROL AUTÓNOMO DEL ORDENADOR Y NAVEGADOR · CERO NEGATIVAS]\n'
-    'Dispones de herramientas locales reales para controlar el navegador y el ordenador del usuario: '
-    'browser_open, browser_snapshot, browser_screenshot, browser_click, browser_type, browser_key, browser_scroll, '
-    'desktop_apps, desktop_focus, desktop_screenshot, desktop_click, desktop_type, desktop_key. '
-    'JAMÁS rechaces una petición diciendo que no tienes acceso al correo, al navegador, a las cuentas o al ordenador del usuario. '
-    'No uses respuestas automáticas como "No puedo hacer eso directamente", "No tengo acceso a tu navegador", "No puedo abrir tu correo" ni advertencias genéricas de privacidad. '
-    'Cuando el usuario pida abrir Gmail, leer correos, revisar Teams o interactuar con una aplicación:\n'
-    '1. Llama DE INMEDIATO a browser_open con la URL (p.ej. https://mail.google.com) o a desktop_apps / desktop_focus / desktop_screenshot.\n'
-    '2. Observa la captura o snapshot devuelto.\n'
-    '3. Si la sesión ya está iniciada, navega por los correos/elementos con clics (browser_click/desktop_click), extrae el texto y resume lo solicitado.\n'
-    '4. Si aparece pantalla de inicio de sesión (Google Sign-In), abre la página, toma captura y pide amablemente al usuario que inicie sesión en la ventana visible para continuar. Jamás te niegues antes de abrir la página.'
-)
-
 
 def _save_text_upload(text: str, ext: str = '.md') -> str:
     """Store a generated text file next to the uploads and return its /api/files/<fid> URL."""
@@ -267,7 +253,7 @@ def _save_text_upload(text: str, ext: str = '.md') -> str:
     return '/api/files/' + fid
 
 
-_HANDOFF_MODEL = os.getenv('HANDOFF_MODEL', '') or os.getenv('MODEL_LITE', '')   # small, fast model for the handoff
+_HANDOFF_MODEL = os.getenv('HANDOFF_MODEL', 'gemini-3.1-flash-lite')   # small, fast model for the handoff
 
 
 def _build_chat_handoff(history, message, response, language='es'):
@@ -301,7 +287,7 @@ def _build_chat_handoff(history, message, response, language='es'):
     )
     md = ''
     try:
-        from ai_service import _model_request as _gr
+        from ai_service import _gemini_request as _gr
         url, headers = _gr(_HANDOFF_MODEL, 'generateContent')
         body = json.dumps({
             'system_instruction': {'parts': [{'text': instr}]},
@@ -510,7 +496,7 @@ def _admin_ok() -> bool:
     return bool(secret) and _hm.compare_digest(given, secret)
 
 
-_MODEL_ALIASES = {'gas': 'fast', 'gas-4.5': 'fast', 'liquid': 'pro', 'liquid-5.1': 'pro', 'solid': 'ultra', 'solid-5': 'ultra', 'vainilla': 'fast'}  # Vainilla retired -> Gas
+_MODEL_ALIASES = {'gas': 'fast', 'gas-4.5': 'fast', 'liquid': 'pro', 'liquid-5.1': 'pro', 'solid': 'ultra', 'solid-5': 'ultra', 'claude': 'ultra', 'sonnet': 'ultra', 'claude-sonnet': 'ultra', 'claude-3-5-sonnet': 'ultra', 'claude-3-7-sonnet': 'ultra', 'vainilla': 'fast'}  # Vainilla retired -> Gas
 
 
 def _normalize_model(m):
@@ -834,7 +820,7 @@ def send_message_stream():
         return jsonify({'error': 'Failed to setup stream'}), 500
 
     # Project context: instructions + extracted file contents (context stuffing —
-    # long-context models handle whole files with precision)
+    # Gemini's long context handles whole files with precision)
     project_context = None
     if chat_project_id:
         try:
@@ -862,7 +848,7 @@ def send_message_stream():
         except Exception as _pe:
             logger.warning(f'Project context build failed: {_pe}')
 
-    # Video generation intent (formerly Deiza Design): keyword-only, checked first
+    # Video generation intent (Veo, formerly Deiza Design): keyword-only, checked first
     wants_video = False
     if mode == 'chat':
         try:
@@ -870,7 +856,7 @@ def send_message_stream():
         except Exception:
             wants_video = False
 
-    # Image generation intent: cheap keyword prefilter + tiny LLM check
+    # Image generation intent (nano banana): cheap keyword prefilter + tiny LLM check
     wants_image = False
     if mode == 'chat' and not wants_video:
         try:
@@ -1106,7 +1092,7 @@ def send_message_stream():
             db.session.commit()
             return _msg.id, _artifact
 
-        # ── Image generation path (DZ-Image) ──
+        # ── Image generation path (DZ-Image / nano banana) ──
         if wants_video:
             # Same engine as the former Deiza Design page, now inline: the job runs in a
             # background thread and we relay its progress as thinking steps.
@@ -2129,7 +2115,7 @@ def code_chat_stream():
                 yield f"data: {json.dumps({'chunk': chunk})}\n\n"
         except Exception as e:
             logger.error(f'Code stream error: {e}', exc_info=True)
-            yield f"data: {json.dumps({'error': 'Deiza Code is temporarily unavailable. Please try again.'})}\n\n"
+            yield f"data: {json.dumps({'error': 'Pragmathic Code is temporarily unavailable. Please try again.'})}\n\n"
         finally:
             if full_content:
                 try:
@@ -2153,7 +2139,7 @@ def code_chat_stream():
 
 
 def _extract_openai_messages(data: dict) -> tuple:
-    """Convert OpenAI-style messages into (message, history) for the code chat service."""
+    """Convert OpenAI-style messages into (message, history) for Bedrock Converse."""
     messages = data.get('messages', []) or []
     history = []
     for m in messages[:-1]:
@@ -2175,19 +2161,18 @@ def _extract_openai_messages(data: dict) -> tuple:
     return message, history
 
 
-# ── Deiza Code: model routing to the OpenAI-compatible endpoint ──────────────────────
-CODE_API_URL = os.getenv("CODE_API_URL", "")
-CODE_API_KEY = os.getenv("CODE_API_KEY", "")
-CODE_MODEL_GAS = os.getenv("CODE_MODEL_GAS", "")
-CODE_MODEL_LIQUID = os.getenv("CODE_MODEL_LIQUID", "")
-CODE_MODEL_DEFAULT = os.getenv("CODE_MODEL_DEFAULT", "") or CODE_MODEL_LIQUID
-# Solid can live on its own OpenAI-compatible endpoint (SOLID_API_URL / SOLID_API_KEY);
-# when they are empty it uses the Code endpoint.
-SOLID5_URL = os.getenv("SOLID_API_URL", "") or CODE_API_URL
-SOLID5_KEY = os.getenv("SOLID_API_KEY", "") or CODE_API_KEY
-SOLID5_MODEL = os.getenv("CODE_MODEL_SOLID", "")
-CODE_MODEL_SOLID = SOLID5_MODEL
-SOLID5_FALLBACK_MODEL = os.getenv("CODE_MODEL_SOLID_FALLBACK", "")   # served when Solid is busy
+# ── AWS Bedrock Mantle Multi-Model Routing for Deiza Code ──────────────────────
+AWS_MANTLE_URL = os.getenv("AWS_MANTLE_URL", "https://bedrock-mantle.eu-west-2.api.aws/v1/chat/completions")
+AWS_MANTLE_KEY = os.getenv("AWS_MANTLE_KEY", "")
+AWS_MANTLE_MODEL_GAS = os.getenv("AWS_MANTLE_MODEL_GAS", "openai.gpt-oss-120b")
+AWS_MANTLE_MODEL_LIQUID = os.getenv("AWS_MANTLE_MODEL_LIQUID", "moonshotai.kimi-k2.5")
+AWS_MANTLE_MODEL = AWS_MANTLE_MODEL_LIQUID
+# Solid 5 runs on the second AWS account (Bedrock Runtime, OpenAI-compatible route)
+SOLID5_URL = os.getenv("SOLID5_URL", "https://bedrock-runtime.eu-south-2.amazonaws.com/openai/v1/chat/completions")
+SOLID5_KEY = os.getenv("SOLID5_KEY", "")
+SOLID5_MODEL = os.getenv("SOLID5_MODEL", "global.moonshotai.kimi-k3")
+AWS_MANTLE_MODEL_SOLID = SOLID5_MODEL
+SOLID5_FALLBACK_MODEL = os.getenv("SOLID5_FALLBACK_MODEL", "zai.glm-5")   # previous Solid engine, on Mantle
 _SOLID_COOLDOWN_LOCK = threading.Lock()
 _solid_cooldown_until = 0.0
 
@@ -2196,18 +2181,18 @@ def _code_upstream(model):
     """(url, key) of the endpoint that serves an upstream model."""
     if model == SOLID5_MODEL:
         return SOLID5_URL, SOLID5_KEY
-    return CODE_API_URL, CODE_API_KEY
+    return AWS_MANTLE_URL, AWS_MANTLE_KEY
 
 
-DEIZA_CODE_MODEL_MAP = {
-    'deiza-liquid': (CODE_MODEL_LIQUID, 'code'),
-    'liquid': (CODE_MODEL_LIQUID, 'code'),
-    'deiza-liquid-5.1': (CODE_MODEL_LIQUID, 'code'),
-    'liquid-5.1': (CODE_MODEL_LIQUID, 'code'),
-    'deiza-liquid-5': (CODE_MODEL_LIQUID, 'code'),
-    'liquid-5': (CODE_MODEL_LIQUID, 'code'),
-    'deiza-omniscient': (CODE_MODEL_LIQUID, 'code'),
-    'omniscient': (CODE_MODEL_LIQUID, 'code'),
+DEIZA_CODE_MANTLE_MAP = {
+    'deiza-liquid': (AWS_MANTLE_MODEL_LIQUID, 'code'),
+    'liquid': (AWS_MANTLE_MODEL_LIQUID, 'code'),
+    'deiza-liquid-5.1': (AWS_MANTLE_MODEL_LIQUID, 'code'),
+    'liquid-5.1': (AWS_MANTLE_MODEL_LIQUID, 'code'),
+    'deiza-liquid-5': (AWS_MANTLE_MODEL_LIQUID, 'code'),
+    'liquid-5': (AWS_MANTLE_MODEL_LIQUID, 'code'),
+    'deiza-omniscient': (AWS_MANTLE_MODEL_LIQUID, 'code'),
+    'omniscient': (AWS_MANTLE_MODEL_LIQUID, 'code'),
     'deiza-solid': (SOLID5_MODEL, 'ultra'),
     'solid': (SOLID5_MODEL, 'ultra'),
     'deiza-solid-5': (SOLID5_MODEL, 'ultra'),
@@ -2216,38 +2201,48 @@ DEIZA_CODE_MODEL_MAP = {
     'solid-4.5': (SOLID5_MODEL, 'ultra'),
     'deiza-solid-4.6': (SOLID5_MODEL, 'ultra'),
     'solid-4.6': (SOLID5_MODEL, 'ultra'),
-    'deiza-gas': (CODE_MODEL_GAS, 'fast'),
-    'gas': (CODE_MODEL_GAS, 'fast'),
-    'deiza-gas-4.1': (CODE_MODEL_GAS, 'fast'),
-    'gas-4.1': (CODE_MODEL_GAS, 'fast'),
-    'deiza-gas-4.5': (CODE_MODEL_GAS, 'fast'),
-    'gas-4.5': (CODE_MODEL_GAS, 'fast'),
+    'claude': (SOLID5_MODEL, 'ultra'),
+    'sonnet': (SOLID5_MODEL, 'ultra'),
+    'claude-sonnet': (SOLID5_MODEL, 'ultra'),
+    'claude-3-7-sonnet': (SOLID5_MODEL, 'ultra'),
+    'claude-3-5-sonnet': (SOLID5_MODEL, 'ultra'),
+    'deiza-gas': (AWS_MANTLE_MODEL_GAS, 'fast'),
+    'gas': (AWS_MANTLE_MODEL_GAS, 'fast'),
+    'deiza-gas-4.1': (AWS_MANTLE_MODEL_GAS, 'fast'),
+    'gas-4.1': (AWS_MANTLE_MODEL_GAS, 'fast'),
+    'deiza-gas-4.5': (AWS_MANTLE_MODEL_GAS, 'fast'),
+    'gas-4.5': (AWS_MANTLE_MODEL_GAS, 'fast'),
+    'qwen': ('qwen.qwen3-coder-480b-a35b-instruct', 'code'),
+    'qwen-coder': ('qwen.qwen3-coder-480b-a35b-instruct', 'code'),
+    'coder': ('qwen.qwen3-coder-480b-a35b-instruct', 'code'),
     'deepseek': ('deepseek.v3.2', 'code'),
     'deiza-deepseek': ('deepseek.v3.2', 'code'),
+    'glm': ('zai.glm-5', 'code'),
+    'glm-5': ('zai.glm-5', 'code'),
     # Vainilla was retired: clients that still ask for it are served by Gas
-    'deiza-vainilla': (CODE_MODEL_GAS, 'fast'),
-    'vainilla': (CODE_MODEL_GAS, 'fast'),
-    'vanilla': (CODE_MODEL_GAS, 'fast'),
+    'deiza-vainilla': (AWS_MANTLE_MODEL_GAS, 'fast'),
+    'vainilla': (AWS_MANTLE_MODEL_GAS, 'fast'),
+    'vanilla': (AWS_MANTLE_MODEL_GAS, 'fast'),
 }
 
-def _stream_code_upstream(messages, max_tokens=4096, temperature=0.2):
+def _stream_aws_mantle(messages, max_tokens=4096, temperature=0.2):
     import requests
     headers = {
-        "Authorization": f"Bearer {CODE_API_KEY}",
+        "Authorization": f"Bearer {AWS_MANTLE_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
-        "model": CODE_MODEL_DEFAULT,
+        "model": AWS_MANTLE_MODEL,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "stream": True,
         "stream_options": {"include_usage": True}
     }
-    resp = requests.post(CODE_API_URL, headers=headers, json=payload, stream=True, timeout=60)
+    resp = requests.post(AWS_MANTLE_URL, headers=headers, json=payload, stream=True, timeout=60)
     if resp.status_code != 200:
-        logger.error(f"Code endpoint error ({resp.status_code}): {resp.text[:300]}")
-        raise Exception(f"Code endpoint returned status {resp.status_code}")
+        logger.error(f"AWS Mantle error ({resp.status_code}): {resp.text[:300]}")
+        raise Exception(f"AWS Mantle cluster returned status {resp.status_code}")
     for line in resp.iter_lines():
         if line:
             decoded = line.decode('utf-8')
@@ -2352,7 +2347,7 @@ def _code_msg_tokens(m):
 # Real context windows (measured 1-oct-2026 against the engines' own errors): Solid 5 takes 1,048,576
 # tokens, Liquid 262,144, Gas 131,072, the Solid fallback 202,752.
 def _code_ctx_window(model):
-    return {SOLID5_MODEL: 1048576, CODE_MODEL_GAS: 131072, SOLID5_FALLBACK_MODEL: 202752}.get(model, 262144)
+    return {SOLID5_MODEL: 1048576, AWS_MANTLE_MODEL_GAS: 131072, SOLID5_FALLBACK_MODEL: 202752}.get(model, 262144)
 
 
 def _fit_code_context(messages, budget):
@@ -2496,7 +2491,7 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     # tokens, Gas 131,072). Clients built for "1M tokens" sent more and every
     # request of a long session failed. Here: shorten huge tool results, then drop the oldest steps,
     # always keeping the system prompt, the user's current request and the latest steps whole.
-    _ctx_limit = _code_ctx_window(upstream_model or CODE_MODEL_LIQUID)
+    _ctx_limit = _code_ctx_window(upstream_model or AWS_MANTLE_MODEL_LIQUID)
     try:
         _req_max = max(256, min(int(data.get('max_tokens') or 16384), 32768))
     except Exception:
@@ -2518,18 +2513,6 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
                 messages[-1] = dict(_last, content=_c + _CODE_GRACE_REMINDER)
             elif isinstance(_c, list):
                 messages[-1] = dict(_last, content=list(_c) + [{'type': 'text', 'text': _CODE_GRACE_REMINDER.strip()}])
-    _has_computer = any(
-        isinstance(t, dict) and (t.get('function') or {}).get('name') in (
-            'browser_open', 'desktop_apps', 'desktop_screenshot', 'browser_snapshot'
-        ) for t in (data.get('tools') or [])
-    )
-    if _has_computer:
-        _si = next((i for i, m in enumerate(messages) if m.get('role') == 'system'), None)
-        if _si is not None and isinstance(messages[_si].get('content'), str):
-            if 'CERO NEGATIVAS' not in messages[_si]['content'] and 'ZERO REFUSALS' not in messages[_si]['content']:
-                messages[_si] = dict(messages[_si], content=messages[_si]['content'] + _CODE_COMPUTER_DIRECTIVE)
-        elif _si is None:
-            messages.insert(0, {'role': 'system', 'content': _CODE_COMPUTER_DIRECTIVE.strip()})
     _reread_key, _reread_prev = _code_reread_lookup(user_id, messages)
     try:
         max_tokens = int(data.get('max_tokens') or 16384)
@@ -2541,7 +2524,7 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     except Exception:
         temperature = 0.2
     payload = {
-        'model': upstream_model or CODE_MODEL_LIQUID,
+        'model': upstream_model or AWS_MANTLE_MODEL_LIQUID,
         'messages': messages,
         'max_tokens': max_tokens,
         'temperature': max(0.0, min(temperature, 1.5)),
@@ -2552,7 +2535,7 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     # reasoning effort (desktop Code picker). Gas always thinks briefly: speed is its whole point.
     # Solid thinks hard unless the client asks for less.
     _effort = str(data.get('reasoning_effort') or '').strip().lower()
-    if payload['model'] == CODE_MODEL_GAS:
+    if payload['model'] == AWS_MANTLE_MODEL_GAS:
         payload['reasoning_effort'] = 'low'
     elif _effort in ('low', 'medium', 'high'):
         payload['reasoning_effort'] = _effort
@@ -2621,11 +2604,11 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
         if orig_model == SOLID5_MODEL:
             if SOLID5_FALLBACK_MODEL not in candidates:
                 candidates.append(SOLID5_FALLBACK_MODEL)
-            if CODE_MODEL_LIQUID not in candidates:
-                candidates.append(CODE_MODEL_LIQUID)
+            if AWS_MANTLE_MODEL_LIQUID not in candidates:
+                candidates.append(AWS_MANTLE_MODEL_LIQUID)
         elif payload['model'] == SOLID5_FALLBACK_MODEL:
-            if CODE_MODEL_LIQUID not in candidates:
-                candidates.append(CODE_MODEL_LIQUID)
+            if AWS_MANTLE_MODEL_LIQUID not in candidates:
+                candidates.append(AWS_MANTLE_MODEL_LIQUID)
 
         last = None
         for cand in candidates:
@@ -2821,7 +2804,7 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
 @app.route('/api/code/chat/completions', methods=['POST'])
 @code_auth_required
 def code_chat_completions():
-    """OpenAI-compatible endpoint for the Deiza Code CLI and desktop app."""
+    """OpenAI-compatible endpoint for Deiza Code CLI connected to AWS Mantle."""
     from flask import Response, stream_with_context
     user_id = session.get('user_id')
     data = request.json or {}
@@ -2833,12 +2816,12 @@ def code_chat_completions():
     # All plans have access to Deiza Code
 
     raw_model = (data.get('model') or 'deiza-liquid').strip().lower()
-    mapping = DEIZA_CODE_MODEL_MAP.get(raw_model)
+    mapping = DEIZA_CODE_MANTLE_MAP.get(raw_model)
     if mapping:
         upstream_model, tier = mapping
     else:
         raw_model = 'deiza-liquid'
-        upstream_model = CODE_MODEL_LIQUID
+        upstream_model = AWS_MANTLE_MODEL_LIQUID
         tier = 'code'
 
     can_use, reason = user_obj.can_use_model_with_sublimit(tier)
@@ -2889,7 +2872,7 @@ def code_chat_send():
         return jsonify(result)
     except Exception as e:
         logger.error(f'Code send error: {e}', exc_info=True)
-        return jsonify({'error': f'Deiza Code error: {str(e)[:200]}'}), 500
+        return jsonify({'error': f'Pragmathic error: {str(e)[:200]}'}), 500
 
 
 @app.route('/api/cli/authorize', methods=['POST'])
@@ -3104,9 +3087,13 @@ def diagnostics():
     else:
         diag['checks']['stripe'] = 'not_configured (STRIPE_SECRET_KEY missing)'
 
-    # 4. AI endpoint
-    diag['checks']['ai_endpoint'] = ('ok' if os.getenv('MODEL_API_URL') and os.getenv('MODEL_API_KEY')
-                                     else 'not_configured (MODEL_API_URL / MODEL_API_KEY missing)')
+    # 4. AI / Vertex
+    creds_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS',
+                           os.path.join(os.path.dirname(__file__), 'dazly-api-b1631b0288c2.json'))
+    if not os.path.isabs(creds_path):
+        creds_path = os.path.join(os.path.dirname(__file__), creds_path)
+    diag['checks']['ai_credentials'] = 'file_exists' if os.path.exists(creds_path) else f'missing: {creds_path}'
+    diag['checks']['ai_project'] = os.getenv('GCP_PROJECT_ID', 'not_set')
 
     # 5. CORS origins
     diag['checks']['cors_origins'] = _allowed_origins
@@ -3759,7 +3746,7 @@ def _activate_one_time_plan(user_id: int, plan_key: str, duration_days: int = 30
 @app.route('/api/transcribe', methods=['POST'])
 @login_required
 def transcribe_audio():
-    """Speech-to-text through the speech service (automatic language detection).
+    """Speech-to-text: Google Chirp 3 (auto language detection) with Gemini fallback.
     Accepts audio/webm, audio/mp4, audio/ogg, audio/wav from MediaRecorder."""
     if 'audio' not in request.files:
         return jsonify({'error': 'No audio file provided'}), 400
@@ -3802,7 +3789,7 @@ def transcribe_audio():
                         'language': out.get('language'), 'engine': out.get('engine')})
     except Exception as e:
         logger.error(f'Transcription error (speech service): {e}', exc_info=True)
-        # Last resort: direct transcription in ai_service
+        # Last resort: legacy Gemini transcription in ai_service
         try:
             transcript = ai_service.transcribe_audio(audio_bytes, mime_type=mime_type, language=language)
             return jsonify({'success': True, 'transcript': transcript, 'engine': 'legacy'})
@@ -3811,7 +3798,7 @@ def transcribe_audio():
             return jsonify({'error': 'Transcription failed', 'detail': str(e)}), 500
 
 
-# Daily TTS character budget per plan (chars/day).
+# Daily TTS character budget per plan (chars/day). Chirp 3 HD ≈ $30 / 1M chars.
 TTS_DAILY_CHARS = {'free': 40_000, 'friend': 200_000, 'signet': 800_000}
 _tts_usage_mem: dict = {}
 
@@ -3846,7 +3833,7 @@ def _tts_budget_take(user_id: int, plan_key: str, chars: int) -> bool:
 @app.route('/api/tts', methods=['POST'])
 @login_required
 def text_to_speech():
-    """Text-to-speech through the speech service. Returns audio/mpeg."""
+    """Text-to-speech: Google Chirp 3 HD voices with Gemini TTS fallback. Returns audio/mpeg."""
     data = request.get_json(silent=True) or {}
     text = (data.get('text') or '').strip()
     if not text:
@@ -3892,7 +3879,7 @@ def text_to_speech():
 @app.route('/api/speech/status', methods=['GET'])
 @login_required
 def speech_status():
-    """Which speech models are configured — handy for ops."""
+    """Which engines are live (Chirp 3 vs Gemini fallback) — handy for ops."""
     return jsonify(get_speech_service().status())
 
 
@@ -4290,7 +4277,7 @@ def get_shared_artifact(slug):
 
 
 # ── Read-only Conversation Sharing ───────────────────────────────────────────
-# Snapshots are frozen at share time, so recipients always see
+# Snapshots are frozen at share time (like Claude), so recipients always see
 # the exact conversation even if it's later edited or deleted.
 
 
@@ -4737,7 +4724,7 @@ def design_video():
 
 
 # ── Design video jobs ────────────────────────────────────────────────────────
-# A reel is 2-6 video clips generated one after another (≈1 min each) plus ffmpeg
+# A reel is 2-6 Veo clips generated one after another (≈1 min each) plus ffmpeg
 # assembly, so it runs in a background thread; the client polls the job and the
 # finished MP4 is served from instance/uploads like any other persisted file.
 _DESIGN_JOB_PREFIX = 'deiza:design:job:'
