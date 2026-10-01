@@ -663,5 +663,6 @@
  "s5.footnote": "O Solid 5 está incluído no Friend e no Signet. O Vainilla sai de cena: o Gas ocupa o seu lugar.",
  "pl.cmp.weekly": "Limite semanal (ponderados)",
  "pl.cmp.grace": "Courtesy margin and .md handoff",
- "ws.usage.grace": "Courtesy"
+ "ws.usage.grace": "Courtesy",
+ "pl.usage.how": "Usage counts what each answer really costs: what the model reads (your message, the conversation, files and the Code context), what it reasons and what it writes; anything it already had cached counts far less. If it runs out mid-task, Deiza wraps up with a courtesy margin and leaves you a handoff to carry on."
 }

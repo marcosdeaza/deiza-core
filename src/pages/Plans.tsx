@@ -272,7 +272,7 @@ const Plans = () => {
                     {t('pl.usage.weekly_title') || 'Cuota semanal (7 días)'}
                   </span>
                   <span className="font-mono text-muted-foreground text-[11.5px] tabular-nums">
-                    {fmt.format(planUsage.weekly_used || 0)} / {fmt.format(planUsage.weekly_limit)} tokens ({planUsage.weekly_pct || 0}%)
+                    {fmt.format(planUsage.weekly_used || 0)} / {fmt.format(planUsage.weekly_limit)} ({planUsage.weekly_pct || 0}%)
                   </span>
                 </div>
                 <div className="h-1.5 w-full rounded-full bg-muted/60 overflow-hidden">
@@ -289,6 +289,7 @@ const Plans = () => {
               </div>
             )}
             {blocked && <p className="mt-3 font-body text-[12px] text-red-300/90">{t('pl.usage.blocked')}</p>}
+            <p className="mt-4 font-body text-[11.5px] leading-relaxed text-muted-foreground/60">{t('pl.usage.how')}</p>
           </motion.section>
         )}
 

@@ -313,7 +313,7 @@
   "ws.err.sublimit": "You have hit the limit for DZ-{model} on your {plan} plan. It resets in {time}. Switch to a lower model or wait.",
   "ws.err.thisconversation": "Could not delete this conversation",
   "ws.err.unavailable": "Deiza is not available right now. Try again.",
-  "ws.err.usage": "You have used up your {plan} plan usage. It resets in {time}. Wait or use another model.",
+  "ws.err.usage": "You have used up your {plan} plan usage. It resets in {time}. If an answer was left unfinished, its handoff is in the previous message.",
   "ws.file": "file",
   "ws.firstproject": "Create your first project: files + instructions",
   "ws.gosignet": "Go to Signet",
@@ -751,8 +751,9 @@
   "s5.footnote": "Solid 5 is included in Friend and Signet. Vainilla is retired: Gas takes its place.",
   "pl.cmp.weekly": "Weekly usage",
   "pl.usage.weekly_title": "Weekly quota (7 days)",
-  "pl.usage.weekly_desc": "Massive weekly quota for intensive, uninterrupted programming sessions.",
+  "pl.usage.weekly_desc": "Weekly cap: keeps a single week from eating the whole plan. It frees up gradually as the days go by.",
   "ws.usage.weekly": "Weekly (7d)",
   "pl.cmp.grace": "Courtesy margin and .md handoff",
-  "ws.usage.grace": "Courtesy"
+  "ws.usage.grace": "Courtesy",
+  "pl.usage.how": "Usage counts what each answer really costs: what the model reads (your message, the conversation, files and the Code context), what it reasons and what it writes; anything it already had cached counts far less. If it runs out mid-task, Deiza wraps up with a courtesy margin and leaves you a handoff to carry on."
 }

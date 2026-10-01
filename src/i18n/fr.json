@@ -663,5 +663,6 @@
  "s5.footnote": "Solid 5 est inclus dans Friend et Signet. Vainilla est retiré : Gas prend sa place.",
  "pl.cmp.weekly": "Plafond hebdomadaire (pondérés)",
  "pl.cmp.grace": "Courtesy margin and .md handoff",
- "ws.usage.grace": "Courtesy"
+ "ws.usage.grace": "Courtesy",
+ "pl.usage.how": "Usage counts what each answer really costs: what the model reads (your message, the conversation, files and the Code context), what it reasons and what it writes; anything it already had cached counts far less. If it runs out mid-task, Deiza wraps up with a courtesy margin and leaves you a handoff to carry on."
 }

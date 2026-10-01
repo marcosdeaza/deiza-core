@@ -314,7 +314,7 @@
   "ws.err.sublimit": "Ya has usado el límite de DZ-{model} de tu plan {plan}. Se reinicia en {time}. Cambia a un modelo inferior o espera.",
   "ws.err.thisconversation": "No se pudo eliminar esta conversación",
   "ws.err.unavailable": "Deiza no está disponible ahora mismo. Inténtalo de nuevo.",
-  "ws.err.usage": "Has agotado el uso de tu plan {plan}. Se reinicia en {time}. Espera o usa otro modelo.",
+  "ws.err.usage": "Has agotado el uso de tu plan {plan}. Se renueva en {time}. Si una respuesta quedó a medias, su traspaso está en el mensaje anterior.",
   "ws.file": "archivo",
   "ws.firstproject": "Crea tu primer proyecto: archivos + instrucciones",
   "ws.gosignet": "Ir a Signet",
@@ -751,8 +751,9 @@
   "s5.footnote": "Solid 5 está incluido en Friend y Signet. Vainilla se retira: Gas ocupa su lugar.",
   "pl.cmp.weekly": "Uso semanal",
   "pl.usage.weekly_title": "Cuota semanal (7 días)",
-  "pl.usage.weekly_desc": "Capacidad semanal ultra-amplia para sesiones intensivas de programación sin interrupciones.",
+  "pl.usage.weekly_desc": "Tope de la semana: evita que una sola semana se coma el plan entero. Se libera poco a poco a medida que pasan los días.",
   "ws.usage.weekly": "Semanal (7d)",
   "pl.cmp.grace": "Margen de cortesía y traspaso .md",
-  "ws.usage.grace": "Cortesía"
+  "ws.usage.grace": "Cortesía",
+  "pl.usage.how": "El uso cuenta lo que de verdad cuesta cada respuesta: lo que el modelo lee (tu mensaje, la conversación, los archivos y el contexto de Code), lo que razona y lo que escribe; lo que ya tenía en caché cuenta mucho menos. Si se acaba a mitad de una tarea, Deiza la cierra con un margen de cortesía y te deja un traspaso para seguir."
 }

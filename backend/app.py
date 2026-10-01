@@ -865,6 +865,10 @@ def send_message_stream():
         except Exception:
             wants_image = False
 
+    if _chat_grace and (wants_image or wants_video):
+        # the courtesy margin closes work in progress; new images or videos wait for the reset
+        return jsonify({'error': 'usage_limit', 'usage': dict(usage, state='exhausted', grace_active=False)}), 429
+
     _mem_extract = bool(data.get('memory_extract'))
     _stream_memory_ctx = '' if _mem_extract else _build_memory_context(user_obj)
     _skills_ctx = _build_skills_context(user_id, language)
@@ -1846,6 +1850,41 @@ def _tolerant_artifact(text):
     except Exception:
         return None
 
+# ── Unhandled errors: JSON for the API, rollback, and a log that survives redeploys ─────────────
+# Container logs are lost every time the backend is recreated, so a real user's 500 used to leave
+# no trace. They go to instance/logs/errors.log (the instance folder is a Docker volume).
+def _error_log_path():
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'logs')
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, 'errors.log')
+
+
+@app.errorhandler(Exception)
+def _unhandled_error(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e
+    import traceback as _tbm
+    try:
+        db.session.rollback()   # a failed transaction must not poison the next query
+    except Exception:
+        pass
+    tb = _tbm.format_exc()
+    logger.error(f'Unhandled {type(e).__name__} on {request.method} {request.path}: {e}\n{tb}')
+    try:
+        p = _error_log_path()
+        if os.path.exists(p) and os.path.getsize(p) > 5 * 1024 * 1024:
+            os.replace(p, p + '.1')
+        with open(p, 'a', encoding='utf-8') as fh:
+            fh.write(f"{datetime.utcnow().isoformat()}Z {request.method} {request.path} "
+                     f"user={session.get('user_id')} {type(e).__name__}: {str(e)[:300]}\n{tb[-2500:]}\n")
+    except Exception:
+        pass
+    if request.path.startswith(('/api/', '/auth/')):
+        return jsonify({'error': 'internal_error'}), 500
+    return 'Internal Server Error', 500
+
+
 @app.route('/api/health', methods=['GET'])
 def health():
     status = {
@@ -2296,6 +2335,12 @@ def _code_msg_tokens(m):
     return n * 2 // 5 + 8
 
 
+# Real context windows (measured 1-oct-2026 against the engines' own errors): Solid 5 takes 1,048,576
+# tokens, Liquid 262,144, Gas 131,072, the Solid fallback 202,752.
+def _code_ctx_window(model):
+    return {SOLID5_MODEL: 1048576, CODE_MODEL_GAS: 131072, SOLID5_FALLBACK_MODEL: 202752}.get(model, 262144)
+
+
 def _fit_code_context(messages, budget):
     """Make a Code conversation fit `budget` tokens without breaking tool call / result pairs."""
     total = lambda: sum(_code_msg_tokens(m) for m in messages)
@@ -2437,7 +2482,7 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     # tokens, Gas 131,072). Clients built for "1M tokens" sent more and every
     # request of a long session failed. Here: shorten huge tool results, then drop the oldest steps,
     # always keeping the system prompt, the user's current request and the latest steps whole.
-    _ctx_limit = {CODE_MODEL_GAS: 131072}.get(upstream_model or CODE_MODEL_LIQUID, 262144)
+    _ctx_limit = _code_ctx_window(upstream_model or CODE_MODEL_LIQUID)
     try:
         _req_max = max(256, min(int(data.get('max_tokens') or 16384), 32768))
     except Exception:
@@ -2560,6 +2605,9 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
         for cand in candidates:
             payload['model'] = cand
             cand_url, cand_key = _code_upstream(cand)
+            if cand != orig_model and _code_ctx_window(cand) < _ctx_limit:
+                # a fallback with a smaller window: fit the conversation to it before sending
+                payload['messages'] = _fit_code_context(payload['messages'], int(_code_ctx_window(cand) - _req_max - 8000))
             cand_headers = {'Authorization': f'Bearer {cand_key}', 'Content-Type': 'application/json'}
             max_cand_attempts = 2 if cand != candidates[-1] else 3
             for _attempt in range(max_cand_attempts):

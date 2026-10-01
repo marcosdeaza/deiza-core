@@ -347,14 +347,14 @@ export default function Download() {
                   Capu es la mascota de Deiza Code: un bloque granate con el pétalo izquierdo más alto y dos ojos que son huecos. Mientras el agente trabaja, teclea en su portátil lleno de pegatinas, sopla el café, se echa una lata por el hueco de los pétalos, le explica el bug al pato de goma y espera a que compile. Cuando la tarea termina, florece.
                 </p>
                 <p className="font-body text-[13px] text-muted-foreground/80">
-                  En la terminal te recibe al abrir y saluda con <code className="font-mono text-foreground/90">/capu</code>. En la app de escritorio vive junto a la línea de estado.
+                  En la terminal te recibe al abrir y saluda con <code className="font-mono text-foreground/90">/capu</code>. En la app de escritorio se queda siempre junto al compositor: te mira mientras escribes y, si le haces clic, te regala una travesura.
                 </p>
               </div>
             </div>
             <div className="mt-8 grid grid-cols-3 sm:grid-cols-6 gap-3">
               {([['typing', 'Programando'], ['coffee', 'Café'], ['can', 'Lata'], ['duck', 'Pato de goma'], ['waiting', 'Compilando'], ['sleep', 'Durmiendo']] as [string, string][]).map(([scene, label]) => (
                 <figure key={scene} className="rounded-2xl bg-muted/35 px-2 pt-3 pb-2 flex flex-col items-center gap-1.5">
-                  <CapuSprite scene={scene} px={1.5} label={`Capu: ${label}`} />
+                  <div className="h-14 flex items-end justify-center"><CapuSprite scene={scene} px={1.5} label={`Capu: ${label}`} /></div>
                   <figcaption className="font-body text-[11px] text-muted-foreground">{label}</figcaption>
                 </figure>
               ))}

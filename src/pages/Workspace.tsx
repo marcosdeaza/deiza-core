@@ -2182,7 +2182,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                       >
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
                         <span className="font-body text-[11px] text-amber-400 hidden sm:inline">
-                          {Math.round(pct * 100)}%
+                          {planUsage.state === 'grace' ? t('ws.usage.grace') : `${Math.min(100, Math.round(pct * 100))}%`}
                         </span>
                       </motion.button>
                     );
