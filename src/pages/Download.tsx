@@ -348,7 +348,7 @@ export default function Download() {
                   Capu es la mascota de Deiza Code: un bloque granate con el pétalo izquierdo más alto y dos ojos que son huecos. Mientras el agente trabaja, teclea en su portátil lleno de pegatinas, sopla el café, se echa una lata por el hueco de los pétalos, le explica el bug al pato de goma y espera a que compile. Cuando la tarea termina, florece.
                 </p>
                 <p className="font-body text-[13px] text-muted-foreground/80">
-                  En la terminal te recibe al abrir y saluda con <code className="font-mono text-foreground/90">/capu</code>. En la app de escritorio se queda siempre junto al compositor: te mira mientras escribes y, si le haces clic, te regala una travesura.
+                  En la terminal te recibe al abrir y saluda con <code className="font-mono text-foreground/90">/capu</code>. En la app de escritorio vive de pie sobre la barra de escritura: pasea, se toma su café, reacciona a lo que haces y, si pasas a Omnisciente, se transforma en Super Saiyan unos segundos.
                 </p>
               </div>
             </div>
