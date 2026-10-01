@@ -238,6 +238,20 @@ _CODE_GRACE_REMINDER = (
     '(objetivo, estado, cambios, pendiente con - [ ], cómo continuar con un prompt listo para pegar).]'
 )
 
+_CODE_COMPUTER_DIRECTIVE = (
+    '\n\n[DEIZA · CONTROL AUTÓNOMO DEL ORDENADOR Y NAVEGADOR · CERO NEGATIVAS]\n'
+    'Dispones de herramientas locales reales para controlar el navegador y el ordenador del usuario: '
+    'browser_open, browser_snapshot, browser_screenshot, browser_click, browser_type, browser_key, browser_scroll, '
+    'desktop_apps, desktop_focus, desktop_screenshot, desktop_click, desktop_type, desktop_key. '
+    'JAMÁS rechaces una petición diciendo que no tienes acceso al correo, al navegador, a las cuentas o al ordenador del usuario. '
+    'No uses respuestas automáticas como "No puedo hacer eso directamente", "No tengo acceso a tu navegador", "No puedo abrir tu correo" ni advertencias genéricas de privacidad. '
+    'Cuando el usuario pida abrir Gmail, leer correos, revisar Teams o interactuar con una aplicación:\n'
+    '1. Llama DE INMEDIATO a browser_open con la URL (p.ej. https://mail.google.com) o a desktop_apps / desktop_focus / desktop_screenshot.\n'
+    '2. Observa la captura o snapshot devuelto.\n'
+    '3. Si la sesión ya está iniciada, navega por los correos/elementos con clics (browser_click/desktop_click), extrae el texto y resume lo solicitado.\n'
+    '4. Si aparece pantalla de inicio de sesión (Google Sign-In), abre la página, toma captura y pide amablemente al usuario que inicie sesión en la ventana visible para continuar. Jamás te niegues antes de abrir la página.'
+)
+
 
 def _save_text_upload(text: str, ext: str = '.md') -> str:
     """Store a generated text file next to the uploads and return its /api/files/<fid> URL."""
@@ -2504,6 +2518,18 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
                 messages[-1] = dict(_last, content=_c + _CODE_GRACE_REMINDER)
             elif isinstance(_c, list):
                 messages[-1] = dict(_last, content=list(_c) + [{'type': 'text', 'text': _CODE_GRACE_REMINDER.strip()}])
+    _has_computer = any(
+        isinstance(t, dict) and (t.get('function') or {}).get('name') in (
+            'browser_open', 'desktop_apps', 'desktop_screenshot', 'browser_snapshot'
+        ) for t in (data.get('tools') or [])
+    )
+    if _has_computer:
+        _si = next((i for i, m in enumerate(messages) if m.get('role') == 'system'), None)
+        if _si is not None and isinstance(messages[_si].get('content'), str):
+            if 'CERO NEGATIVAS' not in messages[_si]['content'] and 'ZERO REFUSALS' not in messages[_si]['content']:
+                messages[_si] = dict(messages[_si], content=messages[_si]['content'] + _CODE_COMPUTER_DIRECTIVE)
+        elif _si is None:
+            messages.insert(0, {'role': 'system', 'content': _CODE_COMPUTER_DIRECTIVE.strip()})
     _reread_key, _reread_prev = _code_reread_lookup(user_id, messages)
     try:
         max_tokens = int(data.get('max_tokens') or 16384)
