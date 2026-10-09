@@ -253,7 +253,7 @@ def _save_text_upload(text: str, ext: str = '.md') -> str:
     return '/api/files/' + fid
 
 
-_HANDOFF_MODEL = os.getenv('HANDOFF_MODEL', 'gemini-3.1-flash-lite')   # small, fast model for the handoff
+_HANDOFF_MODEL = os.getenv('HANDOFF_MODEL', '') or os.getenv('MODEL_LITE', '')   # small, fast model for the handoff
 
 
 def _build_chat_handoff(history, message, response, language='es'):
@@ -287,7 +287,7 @@ def _build_chat_handoff(history, message, response, language='es'):
     )
     md = ''
     try:
-        from ai_service import _gemini_request as _gr
+        from ai_service import _model_request as _gr
         url, headers = _gr(_HANDOFF_MODEL, 'generateContent')
         body = json.dumps({
             'system_instruction': {'parts': [{'text': instr}]},
@@ -496,7 +496,7 @@ def _admin_ok() -> bool:
     return bool(secret) and _hm.compare_digest(given, secret)
 
 
-_MODEL_ALIASES = {'gas': 'fast', 'gas-4.5': 'fast', 'liquid': 'pro', 'liquid-5.1': 'pro', 'solid': 'ultra', 'solid-5': 'ultra', 'claude': 'ultra', 'sonnet': 'ultra', 'claude-sonnet': 'ultra', 'claude-3-5-sonnet': 'ultra', 'claude-3-7-sonnet': 'ultra', 'vainilla': 'fast'}  # Vainilla retired -> Gas
+_MODEL_ALIASES = {'gas': 'fast', 'gas-4.5': 'fast', 'liquid': 'pro', 'liquid-5.1': 'pro', 'solid': 'ultra', 'solid-5': 'ultra', 'vainilla': 'fast'}  # Vainilla retired -> Gas
 
 
 def _normalize_model(m):
@@ -718,6 +718,8 @@ def send_message_stream():
     # Agent mode always uses at least pro
     if mode == 'agent' and model == 'fast':
         model = 'pro'
+    if mode == 'work' and model == 'fast':  # deiza work v1: Work needs vision (Liquid or Solid)
+        model = 'pro'
 
     if not message:
         return jsonify({'error': 'Message is required'}), 400
@@ -762,7 +764,7 @@ def send_message_stream():
                     from models import Project as _Proj
                     _p = _Proj.query.filter_by(id=_pid, user_id=user_id).first()
                     _pid = _p.id if _p else None
-                chat = Chat(user_id=user_id, title=message[:80], project_id=_pid)
+                chat = Chat(user_id=user_id, title=message[:80], project_id=_pid, mode=('work' if mode == 'work' else 'chat'))
                 db.session.add(chat)
                 db.session.commit()
         else:
@@ -771,7 +773,7 @@ def send_message_stream():
                 from models import Project as _Proj
                 _p = _Proj.query.filter_by(id=_pid, user_id=user_id).first()
                 _pid = _p.id if _p else None
-            chat = Chat(user_id=user_id, title=message[:80], project_id=_pid)
+            chat = Chat(user_id=user_id, title=message[:80], project_id=_pid, mode=('work' if mode == 'work' else 'chat'))
             db.session.add(chat)
             db.session.commit()
 
@@ -820,7 +822,7 @@ def send_message_stream():
         return jsonify({'error': 'Failed to setup stream'}), 500
 
     # Project context: instructions + extracted file contents (context stuffing —
-    # Gemini's long context handles whole files with precision)
+    # long-context models handle whole files with precision)
     project_context = None
     if chat_project_id:
         try:
@@ -848,7 +850,7 @@ def send_message_stream():
         except Exception as _pe:
             logger.warning(f'Project context build failed: {_pe}')
 
-    # Video generation intent (Veo, formerly Deiza Design): keyword-only, checked first
+    # Video generation intent (formerly Deiza Design): keyword-only, checked first
     wants_video = False
     if mode == 'chat':
         try:
@@ -856,7 +858,7 @@ def send_message_stream():
         except Exception:
             wants_video = False
 
-    # Image generation intent (nano banana): cheap keyword prefilter + tiny LLM check
+    # Image generation intent: cheap keyword prefilter + tiny LLM check
     wants_image = False
     if mode == 'chat' and not wants_video:
         try:
@@ -894,6 +896,7 @@ def send_message_stream():
         _stream_images = []
         _stream_pptx = None
         _stream_handoff = None
+        _stream_work = []  # deiza work v1: trace of the Work agent (no screenshots)
         _stream_thinking = ('Pensando...' if language == 'es' else 'Thinking...')
         client_gone = False
         _completed_normally = False
@@ -978,6 +981,7 @@ def send_message_stream():
                     'content': full_content[-120000:] if full_content else '',
                     'thinking': _stream_thinking if _stream_thinking else '',
                     'sources': _stream_sources or [], 'images': (_stream_images or [])[:4],
+                    'work': _stream_work[-80:],
                 }
                 _p.update(extra)
                 _redis_client.setex(_gen_key, 3600, json.dumps(_p))
@@ -1039,6 +1043,26 @@ def send_message_stream():
                 except Exception as _ie:
                     logger.debug(f'Images parse error: {_ie}')
                 return []
+            if chunk.startswith('\x00WORK:') and chunk.endswith('\x00'):
+                try:
+                    _w = json.loads(chunk[len('\x00WORK:'):-1])
+                except Exception:
+                    return []
+                if isinstance(_w, dict):
+                    if _w.get('type') == 'step':
+                        _old = next((x for x in _stream_work if x.get('type') == 'step' and x.get('id') == _w.get('id')), None)
+                        if _old:
+                            _old.update(_w)
+                        else:
+                            _stream_work.append(dict(_w))
+                    elif _w.get('type') == 'plan':
+                        _stream_work[:] = [x for x in _stream_work if x.get('type') != 'plan'] + [dict(_w)]
+                    elif _w.get('type') in ('file', 'note', 'preview'):
+                        _stream_work.append(dict(_w))
+                    elif _w.get('type') == 'shot' and _w.get('url'):
+                        _stream_work[:] = [x for x in _stream_work if x.get('type') != 'page'] + [{'type': 'page', 'url': _w.get('url'), 'title': _w.get('title', '')}]
+                    return [{'work': _w}]
+                return []
             if chunk.startswith('\x00PPTX:') and chunk.endswith('\x00'):
                 nonlocal _stream_pptx
                 _pptx_url = chunk[len('\x00PPTX:'):-1].strip()
@@ -1054,6 +1078,8 @@ def send_message_stream():
             _raw_content_len = len(full_content)
             _text = _sse.sub('', full_content).strip()
             _artifact = _stream_pptx if _stream_pptx else (ai_service._extract_artifact(_text) or _tolerant_artifact(_text))
+            if isinstance(_artifact, dict) and not _artifact.get('type') and _artifact.get('kind'):  # deiza work v1: models sometimes write kind
+                _artifact['type'] = _artifact.pop('kind')
             if _artifact:
                 _text = _strip_artifact_block(_text)
                 # the connected path already compiled it (with keepalive pings); never compile twice
@@ -1069,8 +1095,10 @@ def send_message_stream():
                     _text = ('No he podido generar la respuesta esta vez. '
                              'Vuelve a intentarlo, suele funcionar al reintentar.')
             _msg = _DBM(chat_id=new_chat_id, role='assistant', content=_text, artifact_data=_artifact)
-            if _stream_sources or _stream_images or _stream_handoff:
+            if _stream_sources or _stream_images or _stream_handoff or _stream_work:
                 _meta = {'sources': _stream_sources, 'images': _stream_images}
+                if _stream_work:
+                    _meta['work'] = _stream_work[-120:]
                 if _stream_handoff:
                     _meta['handoff'] = _stream_handoff
                 _msg.meta_data = _meta
@@ -1092,7 +1120,7 @@ def send_message_stream():
             db.session.commit()
             return _msg.id, _artifact
 
-        # ── Image generation path (DZ-Image / nano banana) ──
+        # ── Image generation path (DZ-Image) ──
         if wants_video:
             # Same engine as the former Deiza Design page, now inline: the job runs in a
             # background thread and we relay its progress as thinking steps.
@@ -1304,7 +1332,16 @@ def send_message_stream():
         try:
             yield f"data: {json.dumps({'chat_id': new_chat_id})}\n\n"
             _last_redis = time.time()
-            _gen = ai_service.stream_message(message=message, history=history, model=model, language=language,
+            prior_history = history[:-1] if (history and getattr(history[-1], 'role', '') == 'user') else history
+            if mode == 'work':
+                import work_agent as _work_agent
+                _gen = _work_agent.stream(message=message, history=prior_history, model=model, language=language,
+                                          files=files_data, user_id=user_id, chat_id=new_chat_id,
+                                          project_context=project_context, memory_context=_stream_memory_ctx,
+                                          custom_instructions=custom_instructions, skills_context=_skills_ctx,
+                                          usage_sink=_usage_acc)
+            else:
+              _gen = ai_service.stream_message(message=message, history=prior_history, model=model, language=language,
                                              files=files_data, mode=mode, agent_type=agent_type,
                                              project_context=project_context, memory_context=_stream_memory_ctx,
                                              variant=model_variant, fallback=chain_fallback,
@@ -1315,8 +1352,9 @@ def send_message_stream():
                 _gen_save()
             _gen_start = time.time()
             _last_content = time.time()
-            _MAX_SILENCE = 90  # seconds without any content
-            _MAX_TOTAL = 600   # 10 min max generation
+            from conversation_context import chat_silence_timeout
+            _MAX_SILENCE = 240 if mode == 'work' else chat_silence_timeout(model)  # deep reasoning needs a longer window (Work: long tool calls)
+            _MAX_TOTAL = 1500 if mode == 'work' else 600   # 10 min max generation (25 for Work jobs)
             while True:
                 _kind, _chunk = _pump_next(_PING_EVERY)
                 if _kind == 'end':
@@ -1924,14 +1962,53 @@ def _verify_api_key(raw_key: str) -> int or None:
     from models import ApiKey as _AK
     key_hash = _h.sha256(raw_key.encode()).hexdigest()
     ak = _AK.query.filter_by(key_hash=key_hash, revoked=False).first()
+    if ak and ak.expires_at and ak.expires_at < datetime.utcnow():
+        return None
     if ak:
         ak.last_used_at = datetime.utcnow()
+        ak.use_count = (ak.use_count or 0) + 1
+        ak.last_ip = _client_ip()
         try:
             db.session.commit()
         except Exception:
             db.session.rollback()
         return ak.user_id
     return None
+
+# api pro v1 (4-oct-2026) - errors and paths of the public API
+API_SURFACE = ('/api/code/chat/completions', '/api/code/models', '/api/code/usage', '/api/code/search')
+_API_ERR_TYPES = {400: 'invalid_request_error', 401: 'authentication_error', 403: 'permission_error',
+                  404: 'not_found_error', 413: 'invalid_request_error', 429: 'rate_limit_error',
+                  500: 'api_error', 502: 'api_error', 503: 'overloaded_error'}
+
+
+def _api_path() -> bool:
+    p = request.path.rstrip('/')
+    return p in API_SURFACE or p.startswith('/api/v1') or p.startswith('/api/code/v1')
+
+
+def _own_client() -> bool:
+    """Deiza Code CLI and Deiza for desktop parse the older error bodies."""
+    ua = (request.headers.get('User-Agent') or '').lower()
+    return ua.startswith('deiza-code') or ua.startswith('deiza-desktop') or bool(request.headers.get('X-Deiza-Client'))
+
+
+def api_error(status, code, message, legacy=None, headers=None, param=None, **extra):
+    """OpenAI-style error for API users; installed Deiza clients keep the body they already parse."""
+    if legacy is not None and _own_client():
+        body = legacy
+    else:
+        body = {'error': {'message': message, 'type': _API_ERR_TYPES.get(status, 'api_error'), 'code': code, 'param': param, **extra}}
+    resp = jsonify(body)
+    resp.status_code = status
+    for k, v in (headers or {}).items():
+        resp.headers[k] = str(v)
+    return resp
+
+
+def _client_ip() -> str:
+    return (request.headers.get('X-Real-IP') or (request.headers.get('X-Forwarded-For') or '').split(',')[0] or request.remote_addr or '')[:64]
+
 
 def _gen_api_key() -> tuple:
     """Generate a new API key. Returns (raw_key, key_hash, key_prefix)."""
@@ -1968,6 +2045,11 @@ def code_auth_required(f):
             if uid:
                 session['user_id'] = uid
                 return f(*args, **kwargs)
+        if _api_path():
+            return api_error(401, 'invalid_api_key' if api_key else 'missing_api_key',
+                             'Invalid or expired API key.' if api_key else
+                             'Missing API key. Send it as "Authorization: Bearer dz_..." (create one at https://deiza.org/api-keys).',
+                             legacy={'error': 'Authentication required'})
         return jsonify({'error': 'Authentication required'}), 401
     return decorated
 
@@ -1990,28 +2072,70 @@ DEIZA_API_MODELS = {
 }
 
 
-@app.route('/api/code/models', methods=['GET'])
-@code_auth_required
-def code_models():
+from code_search_api import register_code_search  # code search v1
+from work_api import register_work  # deiza work v1
+register_work(app, login_required)
+register_code_search(app, code_auth_required)
+
+
+# Public catalogue (canonical ids; aliases keep working). Context windows measured against the engines.
+PUBLIC_API_MODELS = [
+    {'id': 'deiza-liquid-5.1', 'name': 'Deiza Liquid 5.1', 'default': True,
+     'description': 'Balanced and agentic. The default model: fast, strong at code and tools.',
+     'context_window': 262144, 'max_output_tokens': 32768, 'vision': True, 'tools': True, 'reasoning_effort': True,
+     'aliases': ['deiza-liquid', 'liquid', 'deiza-omniscient']},
+    {'id': 'deiza-solid-5', 'name': 'Deiza Solid 5', 'default': False,
+     'description': 'Deepest reasoning and a 1M-token window: architecture, long documents, hard debugging.',
+     'context_window': 1048576, 'max_output_tokens': 32768, 'vision': True, 'tools': True, 'reasoning_effort': True,
+     'aliases': ['deiza-solid', 'solid']},
+    {'id': 'deiza-gas-4.5', 'name': 'Deiza Gas 4.5', 'default': False,
+     'description': 'The fastest and cheapest. Short tasks, classification, quick answers. Text only.',
+     'context_window': 131072, 'max_output_tokens': 32768, 'vision': False, 'tools': True, 'reasoning_effort': False,
+     'aliases': ['deiza-gas', 'gas']},
+]
+
+
+@app.route('/api/v1', methods=['GET'])
+@app.route('/api/v1/', methods=['GET'])
+def api_v1_index():
+    """Self-description of the public API (for people, tools and AIs)."""
     return jsonify({
+        'name': 'Deiza API', 'version': 'v1', 'compatibility': 'OpenAI Chat Completions',
+        'base_url': 'https://deiza.org/api/v1',
+        'docs': 'https://deiza.org/docs/', 'docs_markdown': 'https://deiza.org/docs/api.md',
+        'llms_txt': 'https://deiza.org/llms.txt', 'openapi': 'https://deiza.org/openapi.json',
+        'auth': 'Authorization: Bearer dz_... (keys at https://deiza.org/api-keys)',
+        'endpoints': ['POST /chat/completions', 'GET /models', 'GET /usage', 'POST /search'],
+        'models': [m['id'] for m in PUBLIC_API_MODELS],
+    })
+
+
+@app.route('/api/code/models', methods=['GET'])
+@app.route('/api/code/v1/models', methods=['GET'])
+@app.route('/api/v1/models', methods=['GET'])
+def code_models():
+    created = 1759276800
+    data = [{'object': 'model', 'created': created, 'owned_by': 'deizalab', **m} for m in PUBLIC_API_MODELS]
+    resp = jsonify({
+        'data': data,
         'object': 'list',
         'models': [
             {
                 'id': 'deiza-liquid',
                 'name': 'Deiza Liquid 5.1',
                 'tag': 'Liquid 5.1',
-                'badge': '1M tokens · Equilibrado',
+                'badge': '262k tokens · Equilibrado',
                 'tier': 'code',
                 'default': True,
                 'provider': 'deizalab',
-                'description': 'Motor principal autónomo. Ventana de 1M tokens, alta velocidad, diffs precisos y equilibrio óptimo para cualquier proyecto.',
+                'description': 'Equilibrado y agéntico. Ventana de 262k tokens, rápido, diffs precisos y visión. Para el trabajo diario.',
                 'features': ['autonomous_coding', '1M_context', 'surgical_diffs', 'tools', 'streaming']
             },
             {
                 'id': 'deiza-solid',
                 'name': 'Deiza Solid 5',
                 'tag': 'Solid 5',
-                'badge': 'Nuevo · Razonamiento profundo',
+                'badge': '1M tokens · Razonamiento profundo',
                 'tier': 'ultra',
                 'default': False,
                 'provider': 'deizalab',
@@ -2041,9 +2165,14 @@ def code_models():
             }
         ]
     })
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    resp.headers['Cache-Control'] = 'public, max-age=300'
+    return resp
 
 
 @app.route('/api/code/usage', methods=['GET'])
+@app.route('/api/code/v1/usage', methods=['GET'])
+@app.route('/api/v1/usage', methods=['GET'])
 @code_auth_required
 def code_usage():
     user_id = session.get('user_id')
@@ -2077,6 +2206,7 @@ def code_usage():
         'grace_used': usage.get('grace_used', 0),
         'grace_remaining': usage.get('grace_remaining', 0),
         'weekly_reset_at': usage.get('weekly_reset_at'),
+        'weekly_reset_in_seconds': usage.get('weekly_reset_in_seconds'),
     })
 
 
@@ -2115,7 +2245,7 @@ def code_chat_stream():
                 yield f"data: {json.dumps({'chunk': chunk})}\n\n"
         except Exception as e:
             logger.error(f'Code stream error: {e}', exc_info=True)
-            yield f"data: {json.dumps({'error': 'Pragmathic Code is temporarily unavailable. Please try again.'})}\n\n"
+            yield f"data: {json.dumps({'error': 'Deiza Code is temporarily unavailable. Please try again.'})}\n\n"
         finally:
             if full_content:
                 try:
@@ -2139,7 +2269,7 @@ def code_chat_stream():
 
 
 def _extract_openai_messages(data: dict) -> tuple:
-    """Convert OpenAI-style messages into (message, history) for Bedrock Converse."""
+    """Convert OpenAI-style messages into (message, history) for the code chat service."""
     messages = data.get('messages', []) or []
     history = []
     for m in messages[:-1]:
@@ -2161,18 +2291,19 @@ def _extract_openai_messages(data: dict) -> tuple:
     return message, history
 
 
-# ── AWS Bedrock Mantle Multi-Model Routing for Deiza Code ──────────────────────
-AWS_MANTLE_URL = os.getenv("AWS_MANTLE_URL", "https://bedrock-mantle.eu-west-2.api.aws/v1/chat/completions")
-AWS_MANTLE_KEY = os.getenv("AWS_MANTLE_KEY", "")
-AWS_MANTLE_MODEL_GAS = os.getenv("AWS_MANTLE_MODEL_GAS", "openai.gpt-oss-120b")
-AWS_MANTLE_MODEL_LIQUID = os.getenv("AWS_MANTLE_MODEL_LIQUID", "moonshotai.kimi-k2.5")
-AWS_MANTLE_MODEL = AWS_MANTLE_MODEL_LIQUID
-# Solid 5 runs on the second AWS account (Bedrock Runtime, OpenAI-compatible route)
-SOLID5_URL = os.getenv("SOLID5_URL", "https://bedrock-runtime.eu-south-2.amazonaws.com/openai/v1/chat/completions")
-SOLID5_KEY = os.getenv("SOLID5_KEY", "")
-SOLID5_MODEL = os.getenv("SOLID5_MODEL", "global.moonshotai.kimi-k3")
-AWS_MANTLE_MODEL_SOLID = SOLID5_MODEL
-SOLID5_FALLBACK_MODEL = os.getenv("SOLID5_FALLBACK_MODEL", "zai.glm-5")   # previous Solid engine, on Mantle
+# ── Deiza Code: model routing to the OpenAI-compatible endpoint ──────────────────────
+CODE_API_URL = os.getenv("CODE_API_URL", "")
+CODE_API_KEY = os.getenv("CODE_API_KEY", "")
+CODE_MODEL_GAS = os.getenv("CODE_MODEL_GAS", "")
+CODE_MODEL_LIQUID = os.getenv("CODE_MODEL_LIQUID", "")
+CODE_MODEL_DEFAULT = os.getenv("CODE_MODEL_DEFAULT", "") or CODE_MODEL_LIQUID
+# Solid can live on its own OpenAI-compatible endpoint (SOLID_API_URL / SOLID_API_KEY);
+# when they are empty it uses the Code endpoint.
+SOLID5_URL = os.getenv("SOLID_API_URL", "") or CODE_API_URL
+SOLID5_KEY = os.getenv("SOLID_API_KEY", "") or CODE_API_KEY
+SOLID5_MODEL = os.getenv("CODE_MODEL_SOLID", "")
+CODE_MODEL_SOLID = SOLID5_MODEL
+SOLID5_FALLBACK_MODEL = os.getenv("CODE_MODEL_SOLID_FALLBACK", "")   # served when Solid is busy
 _SOLID_COOLDOWN_LOCK = threading.Lock()
 _solid_cooldown_until = 0.0
 
@@ -2181,18 +2312,18 @@ def _code_upstream(model):
     """(url, key) of the endpoint that serves an upstream model."""
     if model == SOLID5_MODEL:
         return SOLID5_URL, SOLID5_KEY
-    return AWS_MANTLE_URL, AWS_MANTLE_KEY
+    return CODE_API_URL, CODE_API_KEY
 
 
-DEIZA_CODE_MANTLE_MAP = {
-    'deiza-liquid': (AWS_MANTLE_MODEL_LIQUID, 'code'),
-    'liquid': (AWS_MANTLE_MODEL_LIQUID, 'code'),
-    'deiza-liquid-5.1': (AWS_MANTLE_MODEL_LIQUID, 'code'),
-    'liquid-5.1': (AWS_MANTLE_MODEL_LIQUID, 'code'),
-    'deiza-liquid-5': (AWS_MANTLE_MODEL_LIQUID, 'code'),
-    'liquid-5': (AWS_MANTLE_MODEL_LIQUID, 'code'),
-    'deiza-omniscient': (AWS_MANTLE_MODEL_LIQUID, 'code'),
-    'omniscient': (AWS_MANTLE_MODEL_LIQUID, 'code'),
+DEIZA_CODE_MODEL_MAP = {
+    'deiza-liquid': (CODE_MODEL_LIQUID, 'code'),
+    'liquid': (CODE_MODEL_LIQUID, 'code'),
+    'deiza-liquid-5.1': (CODE_MODEL_LIQUID, 'code'),
+    'liquid-5.1': (CODE_MODEL_LIQUID, 'code'),
+    'deiza-liquid-5': (CODE_MODEL_LIQUID, 'code'),
+    'liquid-5': (CODE_MODEL_LIQUID, 'code'),
+    'deiza-omniscient': (CODE_MODEL_LIQUID, 'code'),
+    'omniscient': (CODE_MODEL_LIQUID, 'code'),
     'deiza-solid': (SOLID5_MODEL, 'ultra'),
     'solid': (SOLID5_MODEL, 'ultra'),
     'deiza-solid-5': (SOLID5_MODEL, 'ultra'),
@@ -2201,48 +2332,38 @@ DEIZA_CODE_MANTLE_MAP = {
     'solid-4.5': (SOLID5_MODEL, 'ultra'),
     'deiza-solid-4.6': (SOLID5_MODEL, 'ultra'),
     'solid-4.6': (SOLID5_MODEL, 'ultra'),
-    'claude': (SOLID5_MODEL, 'ultra'),
-    'sonnet': (SOLID5_MODEL, 'ultra'),
-    'claude-sonnet': (SOLID5_MODEL, 'ultra'),
-    'claude-3-7-sonnet': (SOLID5_MODEL, 'ultra'),
-    'claude-3-5-sonnet': (SOLID5_MODEL, 'ultra'),
-    'deiza-gas': (AWS_MANTLE_MODEL_GAS, 'fast'),
-    'gas': (AWS_MANTLE_MODEL_GAS, 'fast'),
-    'deiza-gas-4.1': (AWS_MANTLE_MODEL_GAS, 'fast'),
-    'gas-4.1': (AWS_MANTLE_MODEL_GAS, 'fast'),
-    'deiza-gas-4.5': (AWS_MANTLE_MODEL_GAS, 'fast'),
-    'gas-4.5': (AWS_MANTLE_MODEL_GAS, 'fast'),
-    'qwen': ('qwen.qwen3-coder-480b-a35b-instruct', 'code'),
-    'qwen-coder': ('qwen.qwen3-coder-480b-a35b-instruct', 'code'),
-    'coder': ('qwen.qwen3-coder-480b-a35b-instruct', 'code'),
+    'deiza-gas': (CODE_MODEL_GAS, 'fast'),
+    'gas': (CODE_MODEL_GAS, 'fast'),
+    'deiza-gas-4.1': (CODE_MODEL_GAS, 'fast'),
+    'gas-4.1': (CODE_MODEL_GAS, 'fast'),
+    'deiza-gas-4.5': (CODE_MODEL_GAS, 'fast'),
+    'gas-4.5': (CODE_MODEL_GAS, 'fast'),
     'deepseek': ('deepseek.v3.2', 'code'),
     'deiza-deepseek': ('deepseek.v3.2', 'code'),
-    'glm': ('zai.glm-5', 'code'),
-    'glm-5': ('zai.glm-5', 'code'),
     # Vainilla was retired: clients that still ask for it are served by Gas
-    'deiza-vainilla': (AWS_MANTLE_MODEL_GAS, 'fast'),
-    'vainilla': (AWS_MANTLE_MODEL_GAS, 'fast'),
-    'vanilla': (AWS_MANTLE_MODEL_GAS, 'fast'),
+    'deiza-vainilla': (CODE_MODEL_GAS, 'fast'),
+    'vainilla': (CODE_MODEL_GAS, 'fast'),
+    'vanilla': (CODE_MODEL_GAS, 'fast'),
 }
 
-def _stream_aws_mantle(messages, max_tokens=4096, temperature=0.2):
+def _stream_code_upstream(messages, max_tokens=4096, temperature=0.2):
     import requests
     headers = {
-        "Authorization": f"Bearer {AWS_MANTLE_KEY}",
+        "Authorization": f"Bearer {CODE_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
-        "model": AWS_MANTLE_MODEL,
+        "model": CODE_MODEL_DEFAULT,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "stream": True,
         "stream_options": {"include_usage": True}
     }
-    resp = requests.post(AWS_MANTLE_URL, headers=headers, json=payload, stream=True, timeout=60)
+    resp = requests.post(CODE_API_URL, headers=headers, json=payload, stream=True, timeout=60)
     if resp.status_code != 200:
-        logger.error(f"AWS Mantle error ({resp.status_code}): {resp.text[:300]}")
-        raise Exception(f"AWS Mantle cluster returned status {resp.status_code}")
+        logger.error(f"Code endpoint error ({resp.status_code}): {resp.text[:300]}")
+        raise Exception(f"Code endpoint returned status {resp.status_code}")
     for line in resp.iter_lines():
         if line:
             decoded = line.decode('utf-8')
@@ -2320,7 +2441,17 @@ def _omniscient_messages(data: dict) -> list:
                 out.append({'role': role, 'content': parts})
         elif isinstance(content, str) and content.strip():
             out.append({'role': role, 'content': content})
-    return out
+    from conversation_context import normalize_code_messages
+    # Attach reasoning from the original messages by complete assistant identity.
+    from conversation_context import reasoning_key
+    originals = {reasoning_key(0, '', m): m for m in data.get('messages', []) if isinstance(m, dict) and m.get('role') == 'assistant'}
+    for m in out:
+        original = originals.get(reasoning_key(0, '', m), {})
+        if m.get('role') == 'assistant':
+            for field in ('reasoning_content', 'reasoning'):
+                if isinstance(original.get(field), str) and original[field]:
+                    m[field] = original[field]
+    return normalize_code_messages(out)
 
 
 def _code_msg_tokens(m):
@@ -2347,69 +2478,18 @@ def _code_msg_tokens(m):
 # Real context windows (measured 1-oct-2026 against the engines' own errors): Solid 5 takes 1,048,576
 # tokens, Liquid 262,144, Gas 131,072, the Solid fallback 202,752.
 def _code_ctx_window(model):
-    return {SOLID5_MODEL: 1048576, AWS_MANTLE_MODEL_GAS: 131072, SOLID5_FALLBACK_MODEL: 202752}.get(model, 262144)
+    return {SOLID5_MODEL: 1048576, CODE_MODEL_GAS: 131072, SOLID5_FALLBACK_MODEL: 202752}.get(model, 262144)
 
 
 def _fit_code_context(messages, budget):
-    """Make a Code conversation fit `budget` tokens without breaking tool call / result pairs."""
-    total = lambda: sum(_code_msg_tokens(m) for m in messages)
-    if not messages or total() <= budget:
-        return messages
-    before = total()
-    head = 1 if messages[0].get('role') == 'system' else 0
-    last_user = max((i for i, m in enumerate(messages) if m.get('role') == 'user'), default=head)
-    # 1) shorten big tool results, oldest first (never the most recent one)
-    for m in messages[head:-1]:
-        if total() <= budget:
-            break
-        c = m.get('content')
-        if m.get('role') == 'tool' and isinstance(c, str) and len(c) > 12000:
-            m['content'] = c[:7000] + '\n\n[... salida recortada por el límite de contexto ...]\n\n' + c[-3000:]
-    # 2) drop earlier exchanges (everything before the current request)
-    while total() > budget and last_user > head:
-        del messages[head]
-        last_user -= 1
-    # 3) drop the oldest steps of the current task, whole (assistant + its tool results), keep the last 3
-    dropped = 0
-    def groups():
-        out, i = [], last_user + 1
-        while i < len(messages):
-            j = i + 1
-            while j < len(messages) and messages[j].get('role') == 'tool':
-                j += 1
-            out.append((i, j))
-            i = j
-        return out
-    while total() > budget:
-        g = groups()
-        if len(g) <= 3:
-            break
-        a, b = g[0]
-        del messages[a:b]
-        dropped += b - a
-    if dropped and last_user < len(messages) and messages[last_user].get('role') == 'user':
-        note = ('\n\n[Nota del sistema: por el límite de contexto se han omitido los primeros pasos de esta tarea. '
-                'Si necesitas algo de ellos, vuelve a leer los archivos.]')
-        c = messages[last_user].get('content')
-        if isinstance(c, str):
-            messages[last_user]['content'] = c + note
-        elif isinstance(c, list):
-            messages[last_user]['content'] = c + [{'type': 'text', 'text': note}]
-    # 4) still too big (one enormous message): shorten the largest texts
-    guard = 0
-    while total() > budget and guard < 40:
-        guard += 1
-        big = max(range(head, len(messages)), key=lambda i: len(messages[i].get('content') or '') if isinstance(messages[i].get('content'), str) else 0)
-        c = messages[big].get('content')
-        if not isinstance(c, str) or len(c) < 4000:
-            break
-        keep = max(2000, int(len(c) * 0.6))
-        messages[big]['content'] = c[:keep // 2] + '\n\n[... recortado por el límite de contexto ...]\n\n' + c[-keep // 2:]
-    # never start with an orphan tool result
-    while len(messages) > head + 1 and messages[head].get('role') == 'tool':
-        del messages[head]
-    logger.info(f'Code context fit: ~{before} -> ~{total()} tokens (budget {budget}), dropped {dropped} step messages')
-    return messages
+    """Fit without silently dropping user requirements or altering the caller's history."""
+    from conversation_context import fit_messages, message_tokens
+    fitted = fit_messages(messages, budget)
+    before = sum(message_tokens(m) for m in messages)
+    after = sum(message_tokens(m) for m in fitted)
+    if after != before:
+        logger.info('Code context fit: ~%s -> ~%s tokens (budget %s); user instructions preserved', before, after, budget)
+    return fitted
 
 
 def _usage_limit_message(usage):
@@ -2472,7 +2552,7 @@ def _code_usage_comment(user_id):
         if not _u:
             return ''
         u = _u.get_current_usage()
-        keep = ('state', 'pct', 'tokens_used', 'token_limit', 'reset_in_seconds', 'weekly_pct', 'limit_scope',
+        keep = ('state', 'pct', 'tokens_used', 'token_limit', 'reset_in_seconds', 'weekly_pct', 'weekly_reset_in_seconds', 'limit_scope',
                 'grace_limit', 'grace_used', 'grace_remaining', 'exhausted')
         return ': deiza-usage ' + json.dumps({k: u.get(k) for k in keep}) + '\n\n'
     except Exception:
@@ -2485,19 +2565,40 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     from flask import send_from_directory, Response, stream_with_context
     from models import User as _User
     messages = _omniscient_messages(data)
+    from conversation_context import CONTINUITY_DIRECTIVE, reasoning_key
+    for m in messages:
+        if m.get('role') == 'system' and isinstance(m.get('content'), str):
+            m['content'] += CONTINUITY_DIRECTIVE
+            break
+    else:
+        messages.insert(0, {'role': 'system', 'content': CONTINUITY_DIRECTIVE.strip()})
+    _requested_engine = upstream_model or CODE_MODEL_LIQUID
+    # Restore thinking for older installed clients using the shared, expiring Redis cache.
+    _assistants = [m for m in messages if m.get('role') == 'assistant' and not (m.get('reasoning_content') or m.get('reasoning'))]
+    if _redis_client and _assistants:
+        try:
+            _stored = _redis_client.mget([reasoning_key(user_id, _requested_engine, m) for m in _assistants])
+            for m, raw in zip(_assistants, _stored):
+                if raw:
+                    m.update(json.loads(raw))
+        except Exception:
+            logger.warning('Code reasoning continuity cache unavailable user=%s', user_id)
     if not messages or messages[-1]['role'] == 'system':
         return jsonify({'error': {'message': 'Messages are required', 'type': 'invalid_request'}}), 400
-    # code context fit v1: every request must fit the engine's real window (Liquid and Solid 262,144
-    # tokens, Gas 131,072). Clients built for "1M tokens" sent more and every
-    # request of a long session failed. Here: shorten huge tool results, then drop the oldest steps,
-    # always keeping the system prompt, the user's current request and the latest steps whole.
-    _ctx_limit = _code_ctx_window(upstream_model or AWS_MANTLE_MODEL_LIQUID)
+    # Fit to the selected engine's real window, counting tool schemas and retained
+    # reasoning. Preserve all user requirements; never silently erase earlier turns.
+    _ctx_limit = _code_ctx_window(upstream_model or CODE_MODEL_LIQUID)
     try:
         _req_max = max(256, min(int(data.get('max_tokens') or 16384), 32768))
     except Exception:
         _req_max = 16384
     _ctx_budget = int(_ctx_limit - _req_max - 8000)
-    messages = _fit_code_context(messages, _ctx_budget)
+    _tool_budget = len(json.dumps(data.get('tools') or [], ensure_ascii=False)) * 2 // 5
+    _ctx_budget -= _tool_budget
+    try:
+        messages = _fit_code_context(messages, _ctx_budget)
+    except ValueError:
+        return jsonify({'error': {'message': 'El contexto excede la capacidad del modelo sin perder tus instrucciones. Selecciona un modelo con más contexto o abre una sesión con un traspaso verificado.', 'type': 'context_length_exceeded'}}), 400
     if grace:
         # courtesy margin: tell the agent to wrap up and leave DEIZA_HANDOFF.md (works with every client)
         _si = next((i for i, m in enumerate(messages) if m.get('role') == 'system'), None)
@@ -2524,7 +2625,7 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     except Exception:
         temperature = 0.2
     payload = {
-        'model': upstream_model or AWS_MANTLE_MODEL_LIQUID,
+        'model': upstream_model or CODE_MODEL_LIQUID,
         'messages': messages,
         'max_tokens': max_tokens,
         'temperature': max(0.0, min(temperature, 1.5)),
@@ -2535,11 +2636,11 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     # reasoning effort (desktop Code picker). Gas always thinks briefly: speed is its whole point.
     # Solid thinks hard unless the client asks for less.
     _effort = str(data.get('reasoning_effort') or '').strip().lower()
-    if payload['model'] == AWS_MANTLE_MODEL_GAS:
+    if payload['model'] == CODE_MODEL_GAS:
         payload['reasoning_effort'] = 'low'
-    elif _effort in ('low', 'medium', 'high'):
-        payload['reasoning_effort'] = _effort
-    elif payload['model'] == SOLID5_MODEL:
+    elif _effort in ('low', 'medium', 'high', 'ultra', 'max'):
+        payload['reasoning_effort'] = ('low' if _effort == 'low' else 'high') if payload['model'] in (CODE_MODEL_LIQUID, SOLID5_MODEL) else ('high' if _effort in ('ultra', 'max') else _effort)
+    elif payload['model'] in (SOLID5_MODEL, CODE_MODEL_LIQUID):
         payload['reasoning_effort'] = 'high'
     # native function calling (the CLI's tools); passed through untouched
     _tools = data.get('tools')
@@ -2589,11 +2690,21 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     _t0 = time.time()
     _prompt_chars = sum(len(json.dumps(m)) for m in messages) if isinstance(messages, list) else 0
 
+    _original_messages = messages
+
+    def _remember_reasoning(message):
+        fields = {k: message[k] for k in ('reasoning_content', 'reasoning') if isinstance(message.get(k), str) and message[k]}
+        if _redis_client and fields and sum(map(len, fields.values())) <= 500000:
+            try:
+                _redis_client.setex(reasoning_key(user_id, payload['model'], message), 21600, json.dumps(fields))
+            except Exception:
+                logger.warning('Code reasoning cache write failed user=%s', user_id)
+
     def _open_upstream():
         nonlocal _up_url, headers
         global _solid_cooldown_until
         now = time.time()
-        orig_model = payload.get('model')
+        orig_model = _requested_engine
 
         # Fast failover if Solid 5 is in cooldown
         if orig_model == SOLID5_MODEL and now < _solid_cooldown_until:
@@ -2604,19 +2715,25 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
         if orig_model == SOLID5_MODEL:
             if SOLID5_FALLBACK_MODEL not in candidates:
                 candidates.append(SOLID5_FALLBACK_MODEL)
-            if AWS_MANTLE_MODEL_LIQUID not in candidates:
-                candidates.append(AWS_MANTLE_MODEL_LIQUID)
+            if CODE_MODEL_LIQUID not in candidates:
+                candidates.append(CODE_MODEL_LIQUID)
         elif payload['model'] == SOLID5_FALLBACK_MODEL:
-            if AWS_MANTLE_MODEL_LIQUID not in candidates:
-                candidates.append(AWS_MANTLE_MODEL_LIQUID)
+            if CODE_MODEL_LIQUID not in candidates:
+                candidates.append(CODE_MODEL_LIQUID)
 
         last = None
         for cand in candidates:
             payload['model'] = cand
             cand_url, cand_key = _code_upstream(cand)
-            if cand != orig_model and _code_ctx_window(cand) < _ctx_limit:
-                # a fallback with a smaller window: fit the conversation to it before sending
-                payload['messages'] = _fit_code_context(payload['messages'], int(_code_ctx_window(cand) - _req_max - 8000))
+            try:
+                payload['messages'] = _fit_code_context(_original_messages, int(_code_ctx_window(cand) - _req_max - 8000 - _tool_budget))
+            except ValueError:
+                logger.warning('Code fallback skipped: context cannot fit without losing instructions user=%s', user_id)
+                continue
+            if cand != orig_model:
+                for _m in payload['messages']:
+                    _m.pop('reasoning', None)
+                    _m.pop('reasoning_content', None)
             cand_headers = {'Authorization': f'Bearer {cand_key}', 'Content-Type': 'application/json'}
             max_cand_attempts = 2 if cand != candidates[-1] else 3
             for _attempt in range(max_cand_attempts):
@@ -2637,10 +2754,14 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
                     body = r.text[:300]
                 except Exception:
                     pass
+                r.close()
                 last = (r.status_code, body)
                 logger.warning(f'Code upstream HTTP {r.status_code} ({cand} attempt {_attempt + 1}) user={user_id} prompt_chars={_prompt_chars}: {body}')
                 if r.status_code == 400 and 'context length' in body:
-                    payload['messages'] = _fit_code_context(payload['messages'], int(_ctx_budget * (0.7 if _attempt == 0 else 0.5)))
+                    try:
+                        payload['messages'] = _fit_code_context(payload['messages'], int((_code_ctx_window(cand) - _req_max - 8000 - _tool_budget) * (0.7 if _attempt == 0 else 0.5)))
+                    except ValueError:
+                        break
                     continue
                 if r.status_code == 429:
                     if cand == SOLID5_MODEL:
@@ -2678,9 +2799,15 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
         usage = up.get('usage') or {}
         _charge(usage.get('prompt_tokens'), usage.get('completion_tokens'), len(text), usage)
         _out_msg = {'role': 'assistant', 'content': text}
+        for _field in ('reasoning', 'reasoning_content'):
+            if isinstance(_msg.get(_field), str):
+                _out_msg[_field] = _msg[_field]
         if _msg.get('tool_calls'):
             _out_msg['tool_calls'] = _msg['tool_calls']
             _out_msg['content'] = text or None
+        if not text.strip() and not _out_msg.get('tool_calls'):
+            return jsonify({'error': {'message': 'Respuesta interrumpida: Deiza Code no devolvió contenido útil. Reintenta la petición.', 'type': 'server_error'}}), 503
+        _remember_reasoning(_out_msg)
         return jsonify({
             'id': up.get('id') or f'chatcmpl-{created}', 'object': 'chat.completion', 'created': created, 'model': model_id,
             'choices': [{'index': 0, 'message': _out_msg, 'finish_reason': _finish}],
@@ -2692,7 +2819,7 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
     def _generate():
         text_len = 0
         usage = {}
-        useful = False          # content, reasoning or a tool call already reached the client
+        useful = False          # visible content or a tool call already reached the client
         finish = None
         attempts = 1
         up = resp
@@ -2700,9 +2827,16 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
             yield ': deiza-usage {"state": "grace"}\n\n'
         while True:
           upstream_error = None
+          finish = None        # each retry must receive its own terminal finish marker
+          _reasoning = {}
+          _calls = {}
+          _answer = ''
           up.encoding = 'utf-8'   # text/event-stream has no charset: requests would decode as latin-1
           try:
             for raw in up.iter_lines(decode_unicode=True):
+                if time.time() - _t0 > 240:
+                    upstream_error = {'message': 'generation deadline exceeded'}
+                    break
                 if raw is None:
                     continue
                 line = raw.strip()
@@ -2725,15 +2859,31 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
                     break
                 if chunk.get('usage'):
                     usage = chunk['usage']
+                chunk.pop('obfuscation', None)
+                chunk.pop('service_tier', None)
+                for _cc in (chunk.get('choices') or []):
+                    if isinstance(_cc, dict):
+                        _cc.pop('obfuscation', None)
                 chunk['model'] = model_id
                 try:
                     _ch = (chunk.get('choices') or [{}])[0]
                     _d = _ch.get('delta', {}) or {}
                     if _ch.get('finish_reason'):
                         finish = _ch.get('finish_reason')
+                    _answer += _d.get('content') or ''
+                    for _field in ('reasoning', 'reasoning_content'):
+                        if isinstance(_d.get(_field), str):
+                            _reasoning[_field] = _reasoning.get(_field, '') + _d[_field]
+                    for _tc in _d.get('tool_calls') or []:
+                        _slot = _calls.setdefault(_tc.get('index', 0), {'id': '', 'type': 'function', 'function': {'name': '', 'arguments': ''}})
+                        if _tc.get('id'):
+                            _slot['id'] = _tc['id']
+                        _fn = _tc.get('function') or {}
+                        _slot['function']['name'] += _fn.get('name') or ''
+                        _slot['function']['arguments'] += _fn.get('arguments') or ''
                     _c = len(_d.get('content') or '')
                     text_len += _c
-                    if _c or _d.get('reasoning') or _d.get('reasoning_content') or _d.get('tool_calls'):
+                    if _c or _d.get('tool_calls'):
                         useful = True
                     for _tc in (_d.get('tool_calls') or []):
                         text_len += len(((_tc.get('function') or {}).get('arguments')) or '')
@@ -2756,35 +2906,39 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
                 up.close()
             except Exception:
                 pass
-          if upstream_error is None and (useful or finish == 'length'):
+          # code proxy terminal integrity v1: reasoning alone is not a completed answer, and
+          # EOF/[DONE] without an explicit terminal finish must not be reported as success.
+          if upstream_error is None and useful and finish in ('stop', 'tool_calls', 'length', 'content_filter', 'function_call'):
+              _saved = dict({'role': 'assistant', 'content': _answer or None}, **_reasoning)
+              if _calls:
+                  _saved['tool_calls'] = [_calls[k] for k in sorted(_calls)]
+              _remember_reasoning(_saved)
               break
-          _why = f'error {str(upstream_error)[:300]}' if upstream_error is not None else f'empty answer (finish={finish})'
-          if not useful and attempts < 3:
-              if upstream_error is not None and 'context length' in str(upstream_error):
-                  payload['messages'] = _fit_code_context(payload['messages'], int(_ctx_budget * (0.7 if attempts == 1 else 0.5)))
-              logger.warning(f'Code upstream {_why} - retrying (attempt {attempts + 1}) user={user_id} model={model_id} prompt_chars={_prompt_chars}')
-              time.sleep(1.0 * attempts)
+          _why = (f'error {str(upstream_error)[:300]}' if upstream_error is not None else
+                  f'incomplete answer (finish={finish})' if useful else f'empty answer (finish={finish})')
+          if not useful and attempts < 2:
+              logger.warning(f'Code upstream {_why} - retrying once user={user_id} model={model_id}')
               attempts += 1
-              nxt = None
-              try:
-                  nxt = _rq.post(_code_upstream(payload['model'])[0], headers={'Authorization': f"Bearer {_code_upstream(payload['model'])[1]}", 'Content-Type': 'application/json'}, json=payload, stream=True, timeout=(30, 300))
-              except Exception as e:
-                  logger.warning(f'Code upstream unreachable on retry user={user_id}: {e}')
-              if nxt is not None and nxt.status_code == 200:
+              if usage:
+                  _charge(usage.get('prompt_tokens'), usage.get('completion_tokens'), text_len, usage)
+              usage = {}
+              text_len = 0
+              if finish == 'length':
+                  # A reasoning-only answer exhausted the budget. Retry with a smaller
+                  # effort; no visible text or tools have been emitted, so nothing repeats.
+                  payload['reasoning_effort'] = 'low'
+              nxt, _retry_failure = _open_upstream()
+              if nxt is not None:
                   up = nxt
                   continue
-              if nxt is not None:
-                  logger.warning(f'Code upstream HTTP {nxt.status_code} on retry user={user_id}: {nxt.text[:200] if hasattr(nxt, "text") else ""}')
-                  continue
-              continue
           logger.error(f'Code upstream {_why} - giving up after {attempts} attempt(s) user={user_id} model={model_id} useful={useful}')
-          if upstream_error is not None or not useful:
-              # Worded so installed clients treat it as transient and retry on their own.
-              yield f"data: {json.dumps({'error': {'message': 'Respuesta interrumpida: se perdió la conexión con Deiza Code (503). Reintentando.', 'type': 'server_error'}})}\n\n"
+          # Also signal a truncated stream after visible content/tool fragments; replaying
+          # those fragments here could duplicate work, so the client owns its recovery.
+          yield f"data: {json.dumps({'error': {'message': 'Respuesta interrumpida: se perdió la conexión con Deiza Code (503). Reintentando.', 'type': 'server_error'}})}\n\n"
           break
         if text_len or usage:
             _charge(usage.get('prompt_tokens'), usage.get('completion_tokens'), text_len, usage, reported=bool(usage))
-        logger.info(f'Code completion user={user_id} model={model_id} attempts={attempts} useful={useful} finish={finish} '
+        logger.info(f'Code completion user={user_id} model={model_id} engine={payload["model"]} effort={payload.get("reasoning_effort")} attempts={attempts} useful={useful} finish={finish} '
                     f'prompt_tokens={usage.get("prompt_tokens")} completion_tokens={usage.get("completion_tokens")} secs={time.time() - _t0:.1f}')
         _uc = _code_usage_comment(user_id)
         if _uc:
@@ -2802,9 +2956,11 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
 
 
 @app.route('/api/code/chat/completions', methods=['POST'])
+@app.route('/api/code/v1/chat/completions', methods=['POST'])
+@app.route('/api/v1/chat/completions', methods=['POST'])
 @code_auth_required
 def code_chat_completions():
-    """OpenAI-compatible endpoint for Deiza Code CLI connected to AWS Mantle."""
+    """OpenAI-compatible endpoint for the Deiza Code CLI and desktop app."""
     from flask import Response, stream_with_context
     user_id = session.get('user_id')
     data = request.json or {}
@@ -2816,22 +2972,38 @@ def code_chat_completions():
     # All plans have access to Deiza Code
 
     raw_model = (data.get('model') or 'deiza-liquid').strip().lower()
-    mapping = DEIZA_CODE_MANTLE_MAP.get(raw_model)
+    mapping = DEIZA_CODE_MODEL_MAP.get(raw_model)
     if mapping:
         upstream_model, tier = mapping
     else:
+        if not _own_client():
+            return api_error(404, 'model_not_found',
+                             f"The model '{raw_model}' does not exist. Use one of: "
+                             + ', '.join(m['id'] for m in PUBLIC_API_MODELS) + ' (GET https://deiza.org/api/v1/models).',
+                             param='model')
         raw_model = 'deiza-liquid'
-        upstream_model = AWS_MANTLE_MODEL_LIQUID
+        upstream_model = CODE_MODEL_LIQUID
         tier = 'code'
 
     can_use, reason = user_obj.can_use_model_with_sublimit(tier)
     _allowed, usage = user_obj.usage_gate()
+    _retry = {'Retry-After': int(usage.get('reset_in_seconds') or 3600)}
+    _plan = user_obj.get_plan()
+    # plans v3: the API and Deiza Code (desktop app, CLI) are for Friend and Signet; Free can look, not run them.
+    if _plan == 'free':
+        return api_error(403, 'plan_required', 'The Deiza API and Deiza Code are included in the Friend and Signet plans. See https://deiza.org/plans',
+                         legacy={'error': 'plan_required', 'model': raw_model, 'plan': 'free',
+                                 'message': 'Deiza Code está incluido en Friend y Signet. Mira los planes en https://deiza.org/plans'})
     if not can_use:
         if reason == 'model_sublimit':
-            return jsonify({'error': 'model_sublimit', 'model': raw_model, 'plan': user_obj.get_plan(), 'usage': usage}), 429
-        return jsonify({'error': 'plan_required', 'model': raw_model, 'plan': user_obj.get_plan()}), 403
+            return api_error(429, 'model_sublimit', f"Your {_plan} plan reached this model's limit for the current 5-hour window. Try another model or wait for the reset.",
+                             legacy={'error': 'model_sublimit', 'model': raw_model, 'plan': _plan, 'usage': usage}, headers=_retry, param='model')
+        return api_error(403, 'plan_required', f"Your {_plan} plan does not include {raw_model}. See https://deiza.org/plans.",
+                         legacy={'error': 'plan_required', 'model': raw_model, 'plan': _plan}, param='model')
     if not _allowed:
-        return jsonify({'error': 'usage_limit', 'usage': usage, 'message': _usage_limit_message(usage)}), 429
+        return api_error(429, 'usage_limit', _usage_limit_message(usage),
+                         legacy={'error': 'usage_limit', 'usage': usage, 'message': _usage_limit_message(usage)}, headers=_retry,
+                         usage={k: usage.get(k) for k in ('limit_scope', 'reset_in_seconds', 'next_reset', 'weekly_reset_at', 'pct', 'weekly_pct')})
 
     stream = bool(data.get('stream', False))
     created = int(time.time())
@@ -2872,7 +3044,7 @@ def code_chat_send():
         return jsonify(result)
     except Exception as e:
         logger.error(f'Code send error: {e}', exc_info=True)
-        return jsonify({'error': f'Pragmathic error: {str(e)[:200]}'}), 500
+        return jsonify({'error': f'Deiza Code error: {str(e)[:200]}'}), 500
 
 
 @app.route('/api/cli/authorize', methods=['POST'])
@@ -2893,7 +3065,8 @@ def cli_authorize():
             'plan': 'free'
         }), 403
     raw, key_hash, key_prefix = _gen_api_key()
-    ak = _AK(user_id=user_id, name='Deiza Code CLI', key_hash=key_hash, key_prefix=key_prefix)
+    ak = _AK(user_id=user_id, name='Deiza Code CLI · ' + datetime.utcnow().strftime('%d/%m/%Y'), key_hash=key_hash,
+             key_prefix=key_prefix, last4=raw[-4:], source='cli')
     db.session.add(ak)
     try:
         db.session.commit()
@@ -2913,8 +3086,8 @@ def cli_authorize():
 def code_list_keys():
     user_id = session.get('user_id')
     from models import ApiKey as _AK
-    keys = _AK.query.filter_by(user_id=user_id, revoked=False).all()
-    return jsonify({'keys': [k.to_dict() for k in keys]})
+    keys = _AK.query.filter_by(user_id=user_id, revoked=False).order_by(_AK.created_at.desc()).all()
+    return jsonify({'keys': [k.to_dict() for k in keys], 'max_keys': API_KEYS_MAX})
 
 
 @app.route('/api/code/keys', methods=['POST'])
@@ -2922,10 +3095,20 @@ def code_list_keys():
 def code_create_key():
     user_id = session.get('user_id')
     data = request.json or {}
-    key_name = data.get('name', 'pragmathic').strip()[:120]
-    raw, key_hash, key_prefix = _gen_api_key()
+    key_name = str(data.get('name') or '').strip()[:120] or 'Clave sin nombre'
     from models import ApiKey as _AK
-    ak = _AK(user_id=user_id, name=key_name, key_hash=key_hash, key_prefix=key_prefix)
+    if _AK.query.filter_by(user_id=user_id, revoked=False).count() >= API_KEYS_MAX:
+        return jsonify({'error': 'too_many_keys', 'message': f'Puedes tener {API_KEYS_MAX} claves activas como máximo. Revoca alguna que no uses.'}), 400
+    expires_at = None
+    try:
+        days = int(data.get('expires_in_days') or 0)
+    except (TypeError, ValueError):
+        days = 0
+    if days in (7, 30, 90, 365):
+        expires_at = datetime.utcnow() + timedelta(days=days)
+    raw, key_hash, key_prefix = _gen_api_key()
+    ak = _AK(user_id=user_id, name=key_name, key_hash=key_hash, key_prefix=key_prefix, last4=raw[-4:],
+             source='web', expires_at=expires_at)
     db.session.add(ak)
     try:
         db.session.commit()
@@ -2933,6 +3116,25 @@ def code_create_key():
         db.session.rollback()
         return jsonify({'error': 'Failed to create key'}), 500
     return jsonify({'key': ak.to_dict(), 'raw_key': raw}), 201
+
+
+API_KEYS_MAX = 50
+
+
+@app.route('/api/code/keys/<int:kid>', methods=['PATCH'])
+@code_auth_required
+def code_rename_key(kid):
+    user_id = session.get('user_id')
+    from models import ApiKey as _AK
+    ak = _AK.query.filter_by(id=kid, user_id=user_id, revoked=False).first()
+    if not ak:
+        return jsonify({'error': 'Key not found'}), 404
+    name = str((request.json or {}).get('name') or '').strip()[:120]
+    if not name:
+        return jsonify({'error': 'name is required'}), 400
+    ak.name = name
+    db.session.commit()
+    return jsonify({'key': ak.to_dict()})
 
 
 @app.route('/api/code/keys/<int:kid>', methods=['DELETE'])
@@ -2958,6 +3160,18 @@ def code_list_sessions():
     """List cloud-synced sessions for the authenticated user."""
     user_id = session.get('user_id')
     from models import UserConversation
+    if request.args.get('kind') == 'desktop':   # desktop code sync v1: small meta rows, tombstones included
+        rows = (UserConversation.query.filter_by(user_id=user_id, kind='desktop-meta')
+                .order_by(UserConversation.updated_at.desc()).limit(500).all())
+        out = []
+        for r in rows:
+            try:
+                meta = json.loads(r.data or '{}')
+            except Exception:
+                meta = {}
+            meta['id'] = r.client_id
+            out.append(meta)
+        return jsonify({'sessions': out}), 200
     rows = (UserConversation.query.filter_by(user_id=user_id, kind='code')
             .order_by(UserConversation.updated_at.desc()).limit(100).all())
     out = []
@@ -2977,6 +3191,57 @@ def code_list_sessions():
     return jsonify({'sessions': out}), 200
 
 
+def _desktop_session(user_id, session_id, max_bytes):
+    """desktop code sync v1: GET/PUT/DELETE one desktop Code session (data row + meta row)."""
+    from models import UserConversation
+    data_row = UserConversation.query.filter_by(user_id=user_id, kind='desktop-code', client_id=session_id).first()
+    meta_row = UserConversation.query.filter_by(user_id=user_id, kind='desktop-meta', client_id=session_id).first()
+    if request.method == 'GET':
+        if not data_row:
+            return jsonify({'error': 'Session not found'}), 404
+        try:
+            return jsonify({'session': json.loads(data_row.data or '{}')}), 200
+        except Exception:
+            return jsonify({'error': 'Corrupt session'}), 500
+    if request.method == 'DELETE':
+        # keep a tombstone so the other devices drop their copy too
+        if data_row:
+            db.session.delete(data_row)
+        if not meta_row:
+            meta_row = UserConversation(user_id=user_id, kind='desktop-meta', client_id=session_id)
+            db.session.add(meta_row)
+        meta_row.title = ''
+        meta_row.data = json.dumps({'deleted': True, 'updatedAt': int(time.time() * 1000)})
+        db.session.commit()
+        return jsonify({'ok': True}), 200
+    body = request.get_json(silent=True) or {}
+    sess = body.get('session') if isinstance(body.get('session'), dict) else None
+    meta = body.get('meta') if isinstance(body.get('meta'), dict) else None
+    if not sess or not meta:
+        return jsonify({'error': 'session and meta are required'}), 400
+    raw = json.dumps(sess, ensure_ascii=False)
+    if len(raw.encode('utf-8')) > max_bytes:
+        return jsonify({'error': 'session payload too large'}), 413
+    meta_raw = json.dumps({k: meta.get(k) for k in ('title', 'folder', 'folderName', 'mode', 'model', 'effort', 'pinned',
+                                                    'createdAt', 'updatedAt', 'device', 'platform', 'turns')}, ensure_ascii=False)[:4000]
+    if not data_row:
+        data_row = UserConversation(user_id=user_id, kind='desktop-code', client_id=session_id)
+        db.session.add(data_row)
+    if not meta_row:
+        meta_row = UserConversation(user_id=user_id, kind='desktop-meta', client_id=session_id)
+        db.session.add(meta_row)
+    title = str(meta.get('title') or 'Sesión')[:200]
+    data_row.title, data_row.data = title, raw
+    meta_row.title, meta_row.data = title, meta_raw
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'desktop session save {session_id}: {e}')
+        return jsonify({'error': 'Failed to save session'}), 500
+    return jsonify({'ok': True}), 200
+
+
 @app.route('/api/code/sessions/<session_id>', methods=['GET', 'PUT', 'DELETE'])
 @code_auth_required
 def code_manage_session(session_id):
@@ -2986,7 +3251,11 @@ def code_manage_session(session_id):
         return jsonify({'error': 'invalid session id'}), 400
     user_id = session.get('user_id')
     from models import UserConversation
-    row = UserConversation.query.filter_by(user_id=user_id, kind='code', client_id=session_id).first()
+    _kind = 'desktop-code' if request.args.get('kind') == 'desktop' else 'code'
+    _max = 6 * 1024 * 1024 if _kind == 'desktop-code' else _CODE_SESSION_MAX_BYTES
+    if _kind == 'desktop-code':
+        return _desktop_session(user_id, session_id, _max)
+    row = UserConversation.query.filter_by(user_id=user_id, kind=_kind, client_id=session_id).first()
 
     if request.method == 'DELETE':
         if row:
@@ -3009,10 +3278,10 @@ def code_manage_session(session_id):
     body = request.json or {}
     sess_obj = body.get('session') if isinstance(body.get('session'), dict) else body
     raw = json.dumps(sess_obj, ensure_ascii=False)
-    if len(raw.encode('utf-8')) > _CODE_SESSION_MAX_BYTES:
+    if len(raw.encode('utf-8')) > _max:
         return jsonify({'error': 'session payload too large'}), 413
     if not row:
-        row = UserConversation(user_id=user_id, kind='code', client_id=session_id)
+        row = UserConversation(user_id=user_id, kind=_kind, client_id=session_id)
         db.session.add(row)
     row.title = str(sess_obj.get('title') or 'Conversación')[:200]
     row.data = raw
@@ -3021,7 +3290,7 @@ def code_manage_session(session_id):
         return jsonify({'ok': True, 'id': row.client_id, 'updatedAt': row.updated_at.isoformat() if row.updated_at else None}), 200
     except Exception as e:
         db.session.rollback()
-        row = UserConversation.query.filter_by(user_id=user_id, kind='code', client_id=session_id).first()
+        row = UserConversation.query.filter_by(user_id=user_id, kind=_kind, client_id=session_id).first()
         if row:
             row.title = str(sess_obj.get('title') or 'Conversación')[:200]
             row.data = raw
@@ -3087,13 +3356,9 @@ def diagnostics():
     else:
         diag['checks']['stripe'] = 'not_configured (STRIPE_SECRET_KEY missing)'
 
-    # 4. AI / Vertex
-    creds_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS',
-                           os.path.join(os.path.dirname(__file__), 'dazly-api-b1631b0288c2.json'))
-    if not os.path.isabs(creds_path):
-        creds_path = os.path.join(os.path.dirname(__file__), creds_path)
-    diag['checks']['ai_credentials'] = 'file_exists' if os.path.exists(creds_path) else f'missing: {creds_path}'
-    diag['checks']['ai_project'] = os.getenv('GCP_PROJECT_ID', 'not_set')
+    # 4. AI endpoint
+    diag['checks']['ai_endpoint'] = ('ok' if os.getenv('MODEL_API_URL') and os.getenv('MODEL_API_KEY')
+                                     else 'not_configured (MODEL_API_URL / MODEL_API_KEY missing)')
 
     # 5. CORS origins
     diag['checks']['cors_origins'] = _allowed_origins
@@ -3193,10 +3458,11 @@ def send_message():
         db.session.commit()
 
         history = Message.query.filter_by(chat_id=chat.id).order_by(Message.created_at).all()
+        prior_history = history[:-1] if (history and getattr(history[-1], 'role', '') == 'user') else history
 
         language = data.get('language', 'en')
         ai_response = ai_service.send_message(
-            message=message, history=history, model=model, files=files, language=language,
+            message=message, history=prior_history, model=model, files=files, language=language,
             memory_context=_build_memory_context(user_obj),
         )
 
@@ -3256,6 +3522,7 @@ def get_chat_history():
             'title': chat.title,
             'project_id': chat.project_id,
             'pinned': chat.pinned,
+            'mode': getattr(chat, 'mode', None) or 'chat',
             'created_at': chat.created_at.isoformat(),
             'updated_at': chat.updated_at.isoformat(),
             'message_count': counts.get(chat.id, 0),
@@ -3280,6 +3547,7 @@ def get_chat_messages(chat_id):
             'id': chat.id,
             'title': chat.title,
             'created_at': chat.created_at.isoformat(),
+            'mode': getattr(chat, 'mode', None) or 'chat',
         },
         'messages': [{
             'id': msg.id,
@@ -3380,12 +3648,22 @@ def manage_chat(chat_id):
 
 ALLOWED_EXTENSIONS = {
     '.pdf', '.txt', '.md', '.py', '.js', '.jsx', '.ts', '.tsx',
-    '.css', '.html', '.png', '.jpg', '.jpeg', '.gif', '.webp',
+    '.css', '.html', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.heic',
+    '.json', '.yaml', '.yml', '.toml', '.sql', '.env', '.csv', '.xml',
+    '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd',
+    '.c', '.cpp', '.h', '.hpp', '.rs', '.go', '.java', '.php', '.rb', '.swift', '.kt', '.lua',
+    '.ini', '.conf', '.log', '.rtf', '.tex',
+    '.zip', '.tar', '.gz', '.tgz',
+}
+ALLOWED_EXACT_NAMES = {
+    'dockerfile', 'makefile', '.env', '.gitignore', '.dockerignore',
+    'gemfile', 'procfile', 'license', 'readme', 'cmakelists.txt',
 }
 ALLOWED_MIMETYPES = {
     'application/pdf', 'text/plain', 'text/markdown', 'text/html', 'text/css',
-    'application/json', 'image/png', 'image/jpeg', 'image/gif', 'image/webp',
-    'application/javascript', 'text/javascript',
+    'application/json', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml',
+    'application/javascript', 'text/javascript', 'application/zip', 'application/x-zip-compressed',
+    'application/x-tar', 'application/gzip', 'application/x-sh', 'text/x-shellscript',
 }
 
 
@@ -3399,10 +3677,13 @@ def upload_file():
     if not file.filename:
         return jsonify({'error': 'No file selected'}), 400
 
-    # Validate extension
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        return jsonify({'error': f'File type {ext} not supported'}), 400
+    filename_lower = file.filename.lower()
+    basename_lower = os.path.basename(filename_lower)
+    ext = os.path.splitext(filename_lower)[1]
+
+    # Validate extension or exact filename (e.g. Dockerfile, Makefile, .env)
+    if ext not in ALLOWED_EXTENSIONS and basename_lower not in ALLOWED_EXACT_NAMES and not basename_lower.startswith('.env'):
+        return jsonify({'error': f'File type {ext or basename_lower} not supported'}), 400
 
     try:
         file_content = ai_service.process_file(file)
@@ -3746,7 +4027,7 @@ def _activate_one_time_plan(user_id: int, plan_key: str, duration_days: int = 30
 @app.route('/api/transcribe', methods=['POST'])
 @login_required
 def transcribe_audio():
-    """Speech-to-text: Google Chirp 3 (auto language detection) with Gemini fallback.
+    """Speech-to-text through the speech service (automatic language detection).
     Accepts audio/webm, audio/mp4, audio/ogg, audio/wav from MediaRecorder."""
     if 'audio' not in request.files:
         return jsonify({'error': 'No audio file provided'}), 400
@@ -3789,7 +4070,7 @@ def transcribe_audio():
                         'language': out.get('language'), 'engine': out.get('engine')})
     except Exception as e:
         logger.error(f'Transcription error (speech service): {e}', exc_info=True)
-        # Last resort: legacy Gemini transcription in ai_service
+        # Last resort: direct transcription in ai_service
         try:
             transcript = ai_service.transcribe_audio(audio_bytes, mime_type=mime_type, language=language)
             return jsonify({'success': True, 'transcript': transcript, 'engine': 'legacy'})
@@ -3798,7 +4079,7 @@ def transcribe_audio():
             return jsonify({'error': 'Transcription failed', 'detail': str(e)}), 500
 
 
-# Daily TTS character budget per plan (chars/day). Chirp 3 HD ≈ $30 / 1M chars.
+# Daily TTS character budget per plan (chars/day).
 TTS_DAILY_CHARS = {'free': 40_000, 'friend': 200_000, 'signet': 800_000}
 _tts_usage_mem: dict = {}
 
@@ -3833,7 +4114,7 @@ def _tts_budget_take(user_id: int, plan_key: str, chars: int) -> bool:
 @app.route('/api/tts', methods=['POST'])
 @login_required
 def text_to_speech():
-    """Text-to-speech: Google Chirp 3 HD voices with Gemini TTS fallback. Returns audio/mpeg."""
+    """Text-to-speech through the speech service. Returns audio/mpeg."""
     data = request.get_json(silent=True) or {}
     text = (data.get('text') or '').strip()
     if not text:
@@ -3879,7 +4160,7 @@ def text_to_speech():
 @app.route('/api/speech/status', methods=['GET'])
 @login_required
 def speech_status():
-    """Which engines are live (Chirp 3 vs Gemini fallback) — handy for ops."""
+    """Which speech models are configured — handy for ops."""
     return jsonify(get_speech_service().status())
 
 
@@ -4277,7 +4558,7 @@ def get_shared_artifact(slug):
 
 
 # ── Read-only Conversation Sharing ───────────────────────────────────────────
-# Snapshots are frozen at share time (like Claude), so recipients always see
+# Snapshots are frozen at share time, so recipients always see
 # the exact conversation even if it's later edited or deleted.
 
 
@@ -4724,7 +5005,7 @@ def design_video():
 
 
 # ── Design video jobs ────────────────────────────────────────────────────────
-# A reel is 2-6 Veo clips generated one after another (≈1 min each) plus ffmpeg
+# A reel is 2-6 video clips generated one after another (≈1 min each) plus ffmpeg
 # assembly, so it runs in a background thread; the client polls the job and the
 # finished MP4 is served from instance/uploads like any other persisted file.
 _DESIGN_JOB_PREFIX = 'deiza:design:job:'
@@ -5212,12 +5493,15 @@ def update_profile():
             
             # Save as WebP
             import os
-            avatar_dir = os.path.join(os.path.dirname(__file__), 'uploads', 'avatars')
+            # instance/ is the persistent volume (deiza-db); uploads/ lived inside the container
+            # and was wiped on every redeploy. The version makes every device fetch the new photo.
+            import time as _avatar_time
+            avatar_dir = os.path.join(os.path.dirname(__file__), 'instance', 'avatars')
             os.makedirs(avatar_dir, exist_ok=True)
             avatar_path = os.path.join(avatar_dir, f'{user.id}.webp')
             img.save(avatar_path, 'WEBP', quality=85)
             
-            user.avatar_url = f'/api/files/avatar/{user.id}.webp'
+            user.avatar_url = f'/api/files/avatar/{user.id}.webp?v={int(_avatar_time.time())}'
         except Exception as e:
             logger.error(f'Avatar upload error: {e}')
             return jsonify({'error': 'avatar_upload_failed'}), 400
@@ -5225,7 +5509,7 @@ def update_profile():
     db.session.commit()
     return jsonify({
         'name': user.name,
-        'avatar_url': user.avatar_url,
+        'avatar_url': user.public_avatar_url(),
     })
 
 
@@ -5233,5 +5517,9 @@ def update_profile():
 def serve_avatar(filename):
     """Serve avatar images."""
     import os
-    avatar_dir = os.path.join(os.path.dirname(__file__), 'uploads', 'avatars')
-    return send_from_directory(avatar_dir, filename, max_age=3600)
+    base = os.path.dirname(__file__)
+    name = os.path.basename(filename)
+    for avatar_dir in (os.path.join(base, 'instance', 'avatars'), os.path.join(base, 'uploads', 'avatars')):
+        if os.path.isfile(os.path.join(avatar_dir, name)):
+            return send_from_directory(avatar_dir, name, max_age=86400, mimetype='image/webp')
+    return '', 404

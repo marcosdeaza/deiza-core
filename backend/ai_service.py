@@ -292,7 +292,6 @@ def _search_image_urls(query: str, num: int = 4) -> list:
 # PPTX) in `artifact_data`, stripped from `content`. Replaying it here is what
 # lets the model iterate on a previous deliverable instead of rebuilding it.
 _HISTORY_FULL_ARTIFACTS = 3        # most recent artifacts are replayed in full
-_HISTORY_ARTIFACT_MAX = 90_000     # chars per replayed artifact
 _HISTORY_OLD_ARTIFACT_MAX = 1_500  # older ones: name + a short excerpt
 
 
@@ -329,18 +328,36 @@ def _history_text(msg, artifact_rank: int) -> str:
     if not content:
         return text
     if artifact_rank < _HISTORY_FULL_ARTIFACTS:
-        body = content if len(content) <= _HISTORY_ARTIFACT_MAX else content[:_HISTORY_ARTIFACT_MAX] + '\n... [recortado]'
+        body = content  # the real token budget, not a character cutoff, controls fitting
         spec = {'name': art.get('name'), 'type': atype, 'content': body}
         return text + '\n\n```artifact\n' + json.dumps(spec, ensure_ascii=False) + '\n```'
     excerpt = content[:_HISTORY_OLD_ARTIFACT_MAX]
     return text + f"\n\n[Artefacto anterior: {art.get('name')} ({atype}); inicio del contenido:]\n{excerpt}\n[...]"
 
 
-def _history_contents(history) -> list:
-    """Model `contents` for the persisted history, artifacts included."""
-    msgs = list(history or [])
-    msgs = msgs[-50:] if len(msgs) > 50 else msgs
-    # rank assistant artifacts from newest to oldest
+def _history_contents(history, current_message: str = None) -> list:
+    """Multi-turn `contents` for persisted history, artifacts included.
+    Preserves initial conversation anchor (first 4 messages: project goals, constraints, rules)
+    and every intermediate requirement until the engine's token budget is reached. Guarantees alternating turns
+    starting with 'user', and strips duplicate trailing user turns."""
+    raw_msgs = list(history or [])
+    if not raw_msgs:
+        return []
+
+    # If the last message in history is the user message being processed, strip it to avoid duplication
+    if raw_msgs and getattr(raw_msgs[-1], 'role', '') == 'user':
+        last_content = (getattr(raw_msgs[-1], 'content', '') or '').strip()
+        if not current_message or last_content == current_message.strip():
+            raw_msgs = raw_msgs[:-1]
+
+    if not raw_msgs:
+        return []
+
+    # Keep the full conversation while it fits the actual engine. A fixed message
+    # count discarded intermediate requirements even in otherwise tiny histories.
+    msgs = raw_msgs
+
+    # Rank assistant artifacts from newest to oldest
     ranks = {}
     r = 0
     for m in reversed(msgs):
@@ -352,14 +369,161 @@ def _history_contents(history) -> list:
             if isinstance(a, dict) and a.get('content') and a.get('type') not in ('image', 'pptx'):
                 ranks[id(m)] = r
                 r += 1
-    out = []
+
+    # Extract turn texts
+    raw_turns = []
     for m in msgs:
         role = 'user' if getattr(m, 'role', 'user') == 'user' else 'model'
         txt = _history_text(m, ranks.get(id(m), 10_000))
-        if not txt:
+        if not txt or not txt.strip():
             continue
-        out.append({'role': role, 'parts': [{'text': txt}]})
+        raw_turns.append({'role': role, 'text': txt})
+
+    if not raw_turns:
+        return []
+
+    # Ensure conversation starts with 'user'
+    while raw_turns and raw_turns[0]['role'] != 'user':
+        raw_turns.pop(0)
+
+    if not raw_turns:
+        return []
+
+    # Merge consecutive same-role turns to guarantee strict alternation
+    normalized = []
+    for turn in raw_turns:
+        if normalized and normalized[-1]['role'] == turn['role']:
+            normalized[-1]['text'] += '\n\n' + turn['text']
+        else:
+            normalized.append(turn)
+
+    out = []
+    for turn in normalized:
+        out.append({'role': turn['role'], 'parts': [{'text': turn['text']}]})
     return out
+
+
+def _process_uploaded_file(file, extract_pdf_fn) -> str:
+    """Universal parser for user-uploaded files: PDFs, images, ZIP/TAR archives, code, scripts, configs, env."""
+    import zipfile, tarfile, io, json, base64
+
+    filename = getattr(file, 'filename', '') or 'uploaded_file'
+    fn_lower = filename.lower()
+    ext = os.path.splitext(fn_lower)[1]
+
+    # Image files
+    IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic'}
+    MIME_MAP = {
+        'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+        'png': 'image/png', 'gif': 'image/gif',
+        'webp': 'image/webp', 'heic': 'image/heic',
+    }
+    if ext in IMAGE_EXTS:
+        try:
+            raw = file.read()
+            clean_ext = ext.lstrip('.')
+            return json.dumps({
+                '__image__': True,
+                'mime_type': MIME_MAP.get(clean_ext, 'image/png'),
+                'raw_bytes': base64.b64encode(raw).decode('utf-8'),
+            })
+        except Exception as e:
+            logger.error(f'Error reading image {filename}: {e}')
+            return f'[Error processing image: {filename}]'
+
+    # PDF documents
+    if ext == '.pdf':
+        try:
+            return extract_pdf_fn(file)
+        except Exception as e:
+            logger.error(f'Error extracting PDF {filename}: {e}')
+            return f'[Error extracting PDF: {filename}]'
+
+    # ZIP archives
+    if ext == '.zip':
+        try:
+            raw = file.read()
+            bio = io.BytesIO(raw)
+            lines = [f'[Archivo ZIP: {filename}]', 'Estructura del archivo:']
+            total_text = 0
+            with zipfile.ZipFile(bio, 'r') as zf:
+                infolist = zf.infolist()
+                for info in infolist[:120]:
+                    lines.append(f'  - {info.filename} ({info.file_size} bytes)')
+                lines.append('')
+                READABLE_EXTS = ('.py', '.js', '.ts', '.jsx', '.tsx', '.json', '.html', '.css',
+                                 '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd', '.md', '.txt',
+                                 '.yml', '.yaml', '.toml', '.sql', '.env', '.c', '.cpp', '.h',
+                                 '.hpp', '.rs', '.go', '.java', '.php', '.rb', '.swift', '.kt',
+                                 '.lua', '.csv', '.xml', '.svg')
+                for info in infolist[:25]:
+                    if info.is_dir() or info.file_size > 100_000:
+                        continue
+                    fname_lower = info.filename.lower()
+                    if any(fname_lower.endswith(e) for e in READABLE_EXTS) or os.path.basename(fname_lower) in ('dockerfile', 'makefile', '.env', '.gitignore'):
+                        try:
+                            data = zf.read(info.filename)
+                            text = data.decode('utf-8', errors='replace')
+                            if total_text + len(text) <= 300_000:
+                                total_text += len(text)
+                                lines.append(f'=== Archivo: {info.filename} ===')
+                                lines.append(text[:30_000])
+                                lines.append('')
+                        except Exception:
+                            pass
+            return '\n'.join(lines)
+        except Exception as e:
+            logger.error(f'Error extracting ZIP {filename}: {e}', exc_info=True)
+            return f'[Error extracting ZIP: {filename}: {e}]'
+
+    # TAR / GZ / TGZ archives
+    if ext in ('.tar', '.gz', '.tgz') or fn_lower.endswith('.tar.gz'):
+        try:
+            raw = file.read()
+            bio = io.BytesIO(raw)
+            lines = [f'[Archivo comprimido: {filename}]', 'Estructura:']
+            total_text = 0
+            with tarfile.open(fileobj=bio, mode='r:*') as tf:
+                members = tf.getmembers()
+                for m in members[:120]:
+                    lines.append(f'  - {m.name} ({m.size} bytes)')
+                lines.append('')
+                READABLE_EXTS = ('.py', '.js', '.ts', '.jsx', '.tsx', '.json', '.html', '.css',
+                                 '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd', '.md', '.txt',
+                                 '.yml', '.yaml', '.toml', '.sql', '.env', '.c', '.cpp', '.h',
+                                 '.hpp', '.rs', '.go', '.java', '.php', '.rb', '.swift', '.kt',
+                                 '.lua', '.csv', '.xml', '.svg')
+                for info in infolist[:25]:
+                    if m.isdir() or m.size > 100_000:
+                        continue
+                    m_lower = m.name.lower()
+                    if any(m_lower.endswith(e) for e in READABLE_EXTS) or os.path.basename(m_lower) in ('dockerfile', 'makefile', '.env', '.gitignore'):
+                        try:
+                            f_obj = tf.extractfile(m)
+                            if f_obj:
+                                text = f_obj.read().decode('utf-8', errors='replace')
+                                if total_text + len(text) <= 300_000:
+                                    total_text += len(text)
+                                    lines.append(f'=== Archivo: {m.name} ===')
+                                    lines.append(text[:30_000])
+                                    lines.append('')
+                        except Exception:
+                            pass
+            return '\n'.join(lines)
+        except Exception as e:
+            logger.error(f'Error extracting archive {filename}: {e}', exc_info=True)
+            return f'[Error extracting archive: {filename}: {e}]'
+
+    # Text, code, script, configuration, data files
+    try:
+        raw = file.read()
+        text = raw.decode('utf-8', errors='replace')
+        if len(text) > 250_000:
+            text = text[:250_000] + '\n\n[... contenido restante truncado por longitud ...]'
+        return text
+    except Exception as e:
+        logger.error(f'Error reading text file {filename}: {e}', exc_info=True)
+        return f'[Error reading file: {filename}: {e}]' 
 
 
 LANGUAGE_NAMES = {
@@ -367,6 +531,15 @@ LANGUAGE_NAMES = {
     'pt': 'Portuguese', 'ru': 'Russian', 'ja': 'Japanese', 'de': 'German', 'fr': 'French',
     'ko': 'Korean', 'it': 'Italian',
 }
+
+
+def _prompt_v2_reasoning(message, files) -> bool:
+    """# prompt v2 hook: Gas reasons at medium effort when the turn is a problem to solve."""
+    try:
+        import prompt_v2
+        return prompt_v2.enabled() and prompt_v2.needs_reasoning(message or '', '', bool(files))
+    except Exception:
+        return False
 
 
 def _language_directive(language: str) -> str:
@@ -2725,14 +2898,13 @@ GENERATION RULES:
         re.I)
 
     def _pick_thinking_level(self, model_key: str, message: str, files: List[Dict], mode: str) -> str:
-        """Liquid answers chit-chat with 'low' thinking (fast first token) and steps up
-        to 'medium' when the request looks like real work. Solid always thinks 'high'."""
+        """Reserve low effort for simple conversation; real work needs active reasoning."""
         if model_key in ('solid', 'ultra'):
             return 'high'
         if mode == 'agent' or files:
-            return 'medium'
+            return 'high'
         if len(message) > 600 or self._COMPLEX_RE.search(message or ''):
-            return 'medium'
+            return 'high'
         return 'low'
 
     def _auto_upgrade_for_images(self, model_key: str, files: List[Dict]) -> str:
@@ -2745,6 +2917,18 @@ GENERATION RULES:
                     logger.info('Image attached — auto-upgrading %s -> liquid', model_key)
                     return 'liquid'
         return model_key
+
+    def _send_message_engine(self, message, history, model, files, language, memory_context):
+        """The legacy non-streaming endpoint uses the same engines and history as chat."""
+        usage = {}
+        chunks = self.stream_message(message=message, history=history, model=model, files=files,
+                                     language=language, memory_context=memory_context, usage_sink=usage)
+        text = re.sub(r'\x00[^\x00]*\x00', '', ''.join(chunks)).strip()
+        artifact = self._extract_artifact(text)
+        from models import usage_units
+        units = usage_units(usage.get('prompt', 0), usage.get('output', 0),
+                            cached=usage.get('cached', 0), reasoning=usage.get('reasoning', 0))
+        return {'content': text, 'artifact': artifact, 'tokens_used': units, 'model': model}
 
     def send_message(
         self,
@@ -2768,6 +2952,8 @@ GENERATION RULES:
         Returns:
             Dictionary with content, artifact (if any), and token usage
         """
+        if os.getenv('CODE_API_KEY') or os.getenv('SOLID_API_KEY'):
+            return self._send_message_engine(message, history, model, files, language, memory_context)
         try:
             model_key = model if model in self.models else 'fast'
             model_key = self._auto_upgrade_for_images(model_key, files)
@@ -2808,7 +2994,7 @@ GENERATION RULES:
                 system_prompt = system_prompt + '\n\n' + memory_context
 
             # Build conversation history
-            contents = _history_contents(history)
+            contents = _history_contents(history, current_message=message)
 
             # Build current message parts
             parts = []
@@ -2832,7 +3018,10 @@ GENERATION RULES:
                         parts.append({'text': f'\n[File: {file_name}]\n{file_content}'})
 
             parts.append({'text': message})
-            contents.append({'role': 'user', 'parts': parts})
+            if contents and contents[-1]['role'] == 'user':
+                contents[-1]['parts'].extend(parts)
+            else:
+                contents.append({'role': 'user', 'parts': parts})
 
             # Call the API
             response_data = self._call_api(model_name, contents, system_prompt)
@@ -2888,24 +3077,64 @@ GENERATION RULES:
             text += '\n\nFuentes: ' + '; '.join(s['title'] for s in srcs[:6])
         return (text or 'Sin resultados.'), srcs
 
+    @staticmethod
+    def _turn_has_image(contents: list) -> bool:
+        last = next((c for c in reversed(contents or []) if c.get('role') == 'user'), None)
+        return bool(last and any((p.get('inline_data') or p.get('inlineData') or {}).get('data') for p in last.get('parts', [])))
+
+    def _chat_engine(self, model_key: str, contents: list, message: str, files, mode: str):
+        """Chat engines on cloud (chat engines v1). model/the image endpoint is only for image generation and
+        editing, plus the emergency chain when an cloud engine cannot answer.
+          Solid 5    -> the model K3 (API 2)
+          Liquid 5.1 -> the model K2.5 (API 1), vision and tools
+          Gas 4.5    -> the fast model (API 1); the vision model (API 1) when the turn carries an image"""
+        engine_url = os.getenv('CODE_API_URL', '')
+        engine_key = os.getenv('CODE_API_KEY', '')
+        if model_key in ('solid', 'ultra') and os.getenv('SOLID_API_KEY'):
+            return {'name': 'Solid 5', 'url': os.getenv('SOLID_API_URL', ''),
+                    'key': os.getenv('SOLID_API_KEY', ''), 'model': os.getenv('CODE_MODEL_SOLID', ''),
+                    'effort': 'high', 'vision': True, 'read_timeout': 300}
+        if not engine_key:
+            return None
+        if model_key in ('liquid', 'pro'):
+            return {'name': 'Liquid 5.1', 'url': engine_url, 'key': engine_key,
+                    'model': os.getenv('CODE_MODEL_LIQUID', ''),
+                    'effort': ('high' if len(contents) > 2 else self._pick_thinking_level('liquid', message, files, mode)), 'vision': True, 'read_timeout': 90}
+        if model_key in ('gas', 'fast'):
+            if self._turn_has_image(contents):
+                return {'name': 'Gas 4.5 Vision', 'url': engine_url, 'key': engine_key,
+                        'model': os.getenv('CODE_MODEL_GAS_VISION', ''),
+                        'effort': None, 'vision': True, 'read_timeout': 60}
+            return {'name': 'Gas 4.5', 'url': engine_url, 'key': engine_key,
+                    'model': os.getenv('CODE_MODEL_GAS', 'openai.the fast model'),
+                    'effort': ('medium' if _prompt_v2_reasoning(message, files) else 'low'),
+                    'vision': False, 'read_timeout': 60}
+        return None
+
     def _solid5_stream(self, system_prompt: str, contents: list, language: str, use_web: bool):
-        """Stream a Solid 5 answer. Yields text plus NUL-framed THINKING / SOURCES events,
-        the same protocol as the Model stream."""
+        """Kept for callers of the old name: Solid 5 through the generic cloud engine."""
+        yield from self._openai_stream(self._chat_engine('solid', contents, '', None, 'chat'), system_prompt, contents, language, use_web)
+
+    def _openai_stream(self, engine: dict, system_prompt: str, contents: list, language: str, use_web: bool):
+        """Stream an answer from an OpenAI-compatible cloud engine. Yields text plus NUL-framed
+        THINKING / SOURCES events, the same protocol as the Model stream."""
         import requests as _rq
-        global _solid5_cooldown_until
         import time
-        if time.time() < getattr(self, '_solid5_cooldown', 0.0):
-            raise RuntimeError('Solid 5 in cooldown')
-        url = os.getenv('SOLID_API_URL', '')
-        key = os.getenv('SOLID_API_KEY', '')
-        model = os.getenv('CODE_MODEL_SOLID', '')
+        if not engine:
+            raise RuntimeError('No cloud engine configured')
+        label = engine['name']
+        cool_key = '_cool_' + engine['model']
+        if time.time() < getattr(self, '_engine_cooldown', {}).get(cool_key, 0.0):
+            raise RuntimeError(f'{label} in cooldown')
+        url, key, model = engine['url'], engine['key'], engine['model']
         NUL = chr(0)
         es = language == 'es'
         if use_web:
             system_prompt += ('\n\n---\nTienes la herramienta web_search. Usala cuando el dato pueda haber cambiado, '
                               'sea reciente o no lo sepas con certeza; haz varias busquedas concretas si hace falta (maximo 4) '
                               'y contrasta. No la uses para saludos, codigo o preguntas que ya sabes. No menciones la herramienta.')
-        msgs = [{'role': 'system', 'content': system_prompt}]
+        from conversation_context import fit_messages, CONTINUITY_DIRECTIVE
+        msgs = [{'role': 'system', 'content': system_prompt + CONTINUITY_DIRECTIVE}]
         for c in contents:
             role = 'user' if c.get('role') == 'user' else 'assistant'
             texts, imgs = [], []
@@ -2915,7 +3144,10 @@ GENERATION RULES:
                 d = p.get('inline_data') or p.get('inlineData')
                 if d and d.get('data') and role == 'user':
                     mime = d.get('mime_type') or d.get('mimeType') or 'image/png'
-                    imgs.append({'type': 'image_url', 'image_url': {'url': f"data:{mime};base64,{d['data']}"}})
+                    if not engine.get('vision'):
+                        texts.append('[imagen adjunta en un mensaje anterior]')
+                    elif mime.startswith('image/'):
+                        imgs.append({'type': 'image_url', 'image_url': {'url': f"data:{mime};base64,{d['data']}"}})
             text = '\n'.join(texts).strip()
             if not text and not imgs:
                 continue
@@ -2936,72 +3168,103 @@ GENERATION RULES:
         step_at = [0, 400, 2500]          # reasoning characters before each step shows
         shown = 0
         reasoned = 0
+        progress_at = time.monotonic()
         wrote = False
+        context_window = 1048576 if model == os.getenv('CODE_MODEL_SOLID', '') else (262144 if 'liquid' in model else 131072)
         for rnd in range(5):
+            msgs = fit_messages(msgs, context_window - 32000 - 8000)
             body = {'model': model, 'messages': msgs, 'max_tokens': 32000, 'stream': True,
-                    'stream_options': {'include_usage': True}, 'reasoning_effort': 'high'}
+                    'stream_options': {'include_usage': True}}
+            if engine.get('effort'):
+                body['reasoning_effort'] = engine['effort']
             if use_web and rnd < 4:
                 body['tools'] = tools
             resp = None
             for attempt in range(3):
                 try:
-                    resp = _rq.post(url, headers=headers, json=body, stream=True, timeout=(20, 300))
+                    resp = _rq.post(url, headers=headers, json=body, stream=True, timeout=(20, engine.get('read_timeout', 300)))
                 except Exception as e:
-                    logger.warning(f'Solid 5 unreachable (attempt {attempt + 1}): {e}')
+                    logger.warning(f'{label} unreachable (attempt {attempt + 1}): {e}')
                     resp = None
                     time.sleep(1.0 + attempt)
                     continue
                 if resp.status_code == 200:
                     break
                 err = resp.text[:300]
-                logger.warning(f'Solid 5 HTTP {resp.status_code} (attempt {attempt + 1}): {err}')
+                resp.close()
+                logger.warning(f'{label} HTTP {resp.status_code} (attempt {attempt + 1}): {err}')
                 if resp.status_code == 429:
-                    self._solid5_cooldown = time.time() + 60.0
-                    raise RuntimeError('Solid 5 HTTP 429 rate limited')
+                    if not hasattr(self, '_engine_cooldown'):
+                        self._engine_cooldown = {}
+                    self._engine_cooldown[cool_key] = time.time() + 60.0
+                    raise RuntimeError(f'{label} HTTP 429 rate limited')
                 if resp.status_code not in (408, 500, 502, 503, 504):
-                    raise RuntimeError(f'Solid 5 HTTP {resp.status_code}')
+                    raise RuntimeError(f'{label} HTTP {resp.status_code}')
                 resp = None
                 time.sleep(1.0 + attempt)
             if resp is None:
-                raise RuntimeError('Solid 5 unavailable')
+                raise RuntimeError(f'{label} unavailable')
             resp.encoding = 'utf-8'
             calls, reasoning, content = {}, '', ''
-            for line in resp.iter_lines(decode_unicode=True):
-                if not line or not line.startswith('data:'):
-                    continue
-                raw = line[5:].strip()
-                if raw == '[DONE]':
-                    break
-                try:
-                    _obj = json.loads(raw)
-                    if _obj.get('usage'):
-                        _usage_add_openai(_obj['usage'])
-                    ch = (_obj.get('choices') or [{}])[0]
-                except Exception:
-                    continue
-                delta = ch.get('delta') or {}
-                r = delta.get('reasoning_content') or delta.get('reasoning') or ''
-                if r:
-                    # The raw reasoning is not shown (it is not in the user's language); a few
-                    # localized progress steps are, as it grows
-                    reasoning += r
-                    reasoned += len(r)
-                    while shown < len(steps) and reasoned >= step_at[shown]:
-                        yield NUL + 'THINKING:' + steps[shown] + NUL
-                        shown += 1
-                c = delta.get('content') or ''
-                if c:
-                    if wrote and not content:
-                        yield '\n\n'          # text before a search and the answer after it
-                    content += c
-                    wrote = True
-                    yield c
-                for tc in (delta.get('tool_calls') or []):
-                    slot = calls.setdefault(tc.get('index', 0), {'id': '', 'name': '', 'args': ''})
-                    slot['id'] = tc.get('id') or slot['id']
-                    fn = tc.get('function') or {}
-                    slot['name'] = fn.get('name') or slot['name']
-                    slot['args'] += fn.get('arguments') or ''
+            reasoning_field = 'reasoning_content'
+            finish = None
+            try:
+              for line in resp.iter_lines(decode_unicode=True):
+                  if not line or not line.startswith('data:'):
+                      continue
+                  raw = line[5:].strip()
+                  if raw == '[DONE]':
+                      break
+                  try:
+                      _obj = json.loads(raw)
+                      if _obj.get('usage'):
+                          _usage_add_openai(_obj['usage'])
+                      if _obj.get('error'):
+                          raise RuntimeError(f'{label} stream error')
+                      ch = (_obj.get('choices') or [{}])[0]
+                  except RuntimeError:
+                      raise
+                  except Exception:
+                      continue
+                  finish = ch.get('finish_reason') or finish
+                  delta = ch.get('delta') or {}
+                  r = delta.get('reasoning_content') or delta.get('reasoning') or ''
+                  if r:
+                      reasoning_field = 'reasoning_content' if delta.get('reasoning_content') else 'reasoning'
+                      # The raw reasoning is not shown (it is not in the user's language); a few
+                      # localized progress steps are, as it grows
+                      reasoning += r
+                      reasoned += len(r)
+                      while shown < len(steps) and reasoned >= step_at[shown]:
+                          yield NUL + 'THINKING:' + steps[shown] + NUL
+                          shown += 1
+                          progress_at = time.monotonic()
+                      if shown >= len(steps) and time.monotonic() - progress_at >= 15:
+                          # Report actual ongoing reasoning so the chat watchdog does not
+                          # mistake long thinking for a stalled upstream connection.
+                          yield NUL + 'THINKING:' + steps[-1] + NUL
+                          progress_at = time.monotonic()
+                  c = delta.get('content') or ''
+                  if c:
+                      if wrote and not content:
+                          yield '\n\n'          # text before a search and the answer after it
+                      content += c
+                      wrote = True
+                      yield c
+                  for tc in (delta.get('tool_calls') or []):
+                      slot = calls.setdefault(tc.get('index', 0), {'id': '', 'name': '', 'args': ''})
+                      slot['id'] = tc.get('id') or slot['id']
+                      fn = tc.get('function') or {}
+                      slot['name'] = fn.get('name') or slot['name']
+                      slot['args'] += fn.get('arguments') or ''
+            finally:
+                resp.close()
+            if finish not in ('stop', 'tool_calls', 'length', 'content_filter', 'function_call'):
+                raise RuntimeError(f'{label} stream interrupted before completion')
+            if finish in ('length', 'content_filter'):
+                raise RuntimeError(f'{label} answer incomplete (finish={finish})')
+            if not calls and not content.strip():
+                raise RuntimeError(f'{label} returned an empty answer')
             if not calls:
                 return
             assistant = {'role': 'assistant', 'content': content or None,
@@ -3009,7 +3272,7 @@ GENERATION RULES:
                                          'function': {'name': c['name'], 'arguments': c['args'] or '{}'}}
                                         for i, c in sorted(calls.items())]}
             if reasoning:
-                assistant['reasoning_content'] = reasoning
+                assistant[reasoning_field] = reasoning
             msgs.append(assistant)
             for tcall in assistant['tool_calls']:
                 try:
@@ -3064,16 +3327,30 @@ GENERATION RULES:
         import urllib.error
 
         model_key = model if model in self.models else 'fast'
-        model_key = self._auto_upgrade_for_images(model_key, files)
+        if not os.getenv('CODE_API_KEY'):
+            # Without the cloud engines Gas runs on flash-lite, which cannot read images
+            model_key = self._auto_upgrade_for_images(model_key, files)
         model_name = self.models[model_key]
         variant = variant if variant in self.variants else None
         if variant and self.variants[variant][0] == model_key:
             model_name = self.variants[variant][1]
         current_dt = datetime.now().strftime('%A, %d de %B de %Y · %H:%M')
+        _v2 = None  # prompt v2 hook: layered prompt, see prompt_v2.py (rollback: touch /app/instance/prompt_v1)
         if mode == 'agent':
             system_prompt = self._get_agent_prompt(agent_type, language, current_dt)
         else:
             base_prompt = self.system_prompts.get(language, self.system_prompts['en'])
+            try:
+                import prompt_v2
+                if prompt_v2.enabled():
+                    _h_text, _h_art = prompt_v2.history_info(history)
+                    _v2 = prompt_v2.build_base_prompt(base_prompt, language, model_key, variant, message or '',
+                                                      _h_text, bool(files), _h_art)
+            except Exception as _e:
+                logger.warning(f'prompt v2 unavailable, using v1: {_e}')
+                _v2 = None
+            if _v2:
+                base_prompt = _v2
             if language == 'es':
                 system_prompt = base_prompt + f'\n\n---\n**Fecha y hora actual:** {current_dt}'
             else:
@@ -3107,13 +3384,15 @@ GENERATION RULES:
         if variant == 'liquid45':
             tier_name = 'Deiza Liquid 4.5'
         family = tier_name.replace('Deiza ', '').split(' ')[0]
-        system_prompt += (f'\n\n---\n**Modelo activo:** Actualmente estas ejecutandote como **{tier_name}**, '
+        system_prompt += '' if _v2 else (f'\n\n---\n**Modelo activo:** Actualmente estas ejecutandote como **{tier_name}**, '
                           f'especializado en {tier_desc}. REGLA DE IDENTIDAD: eres {tier_name} (familia {family}). '
                           f'JAMAS digas que eres otro nivel o version. Cuando te pregunten que modelo eres, responde: '
                           f'"Soy {tier_name}, el nivel de {tier_desc} de la arquitectura multicapa Deiza, desarrollada por DeizaLab." '
                           f'La gama actual de Deiza es: Gas 4.5, Liquid 5.1 (y Liquid 4.5, generacion anterior) y Solid 5, el modelo mas capaz de Deiza.')
         
-        if model_key in ('gas', 'fast'):
+        if _v2:
+            pass  # the tier layer of prompt v2 replaces these style blocks
+        elif model_key in ('gas', 'fast'):
             system_prompt += ('\n\n---\n**ESTILO GAS - REGLAS DE RESPUESTA:**\n'
                               '- Responde CORTO y DIRECTO por defecto: la respuesta minima que resuelve la pregunta.\n'
                               '- NO uses encabezados, listas ni negritas en respuestas cortas o conversacionales.\n'
@@ -3160,7 +3439,7 @@ GENERATION RULES:
                           'options each). The interface turns it into buttons. If you can assume something reasonable, '
                           'do not ask: do it.')
 
-        contents = _history_contents(history)
+        contents = _history_contents(history, current_message=message)
 
         parts = [{'text': message + _attached_image_note(files)}]
         if files:
@@ -3174,7 +3453,10 @@ GENERATION RULES:
                 else:
                     parts.append({'text': f'\n[File: {file_name}]\n{file_content}'})
 
-        contents.append({'role': 'user', 'parts': parts})
+        if contents and contents[-1]['role'] == 'user':
+            contents[-1]['parts'].extend(parts)
+        else:
+            contents.append({'role': 'user', 'parts': parts})
 
         # ── Fotos reales de la web (peticion simple: "busca fotos de X") ──
         # Se buscan y verifican ANTES de generar, se muestran en galeria y se
@@ -3411,6 +3693,8 @@ GENERATION RULES:
         if mode == 'agent' and agent_type in ('slides', 'writing', 'analyst'):
             if 'thinkingConfig' in gen_config:
                 gen_config = {**gen_config, 'thinkingConfig': {'thinkingLevel': 'low', 'includeThoughts': True}}
+        if _v2:
+            system_prompt += prompt_v2.tail_reminder(language, model_key)
         payload = {
             'contents': contents,
             'system_instruction': {'parts': [{'text': system_prompt}]},
@@ -3420,22 +3704,29 @@ GENERATION RULES:
             'safetySettings': SAFETY_UNRESTRICTED,
         }
 
-        # Solid 5: its own engine. Everything above (photos, research, decks, the prompt) is shared;
-        # only the generation changes. If it cannot answer, the model chain below takes over.
-        if model_key in ('solid', 'ultra') and os.getenv('SOLID_API_KEY'):
-            _s5_text = False
+        # Every chat model generates on cloud (see _chat_engine). Everything above (photos, research,
+        # decks, the prompt) is shared; only the generation changes. If the cloud engine cannot answer
+        # before writing anything, the model chain below takes over as a safety net.
+        _engine = self._chat_engine(model_key, contents, message, files, mode)
+        if _engine:
+            _engine_text = False
+            _t0 = time.time()
             try:
-                for _piece in self._solid5_stream(system_prompt, contents, language, bool(payload['tools'])):
+                for _piece in self._openai_stream(_engine, system_prompt, contents, language, bool(payload['tools'])):
                     if not _piece.startswith(chr(0)):
-                        _s5_text = True
+                        if not _engine_text:
+                            logger.info('%s (%s) first text in %.1fs', _engine['name'], _engine['model'], time.time() - _t0)
+                        _engine_text = True
                     yield _piece
-                if _s5_text:
+                if _engine_text:
                     return
-                logger.warning('Solid 5 returned no text; falling back to the model chain')
-            except Exception as _s5e:
-                if _s5_text:
+                logger.warning('%s returned no text; falling back to the model chain', _engine['name'])
+            except Exception as _engine_err:
+                if _engine_text:
                     raise
-                logger.error(f'Solid 5 failed before answering; falling back to the model chain: {_s5e}')
+                logger.error('%s failed before answering; falling back to the model chain: %s', _engine['name'], _engine_err)
+            if model_key in ('gas', 'fast') and self._turn_has_image(contents):
+                model_name = self.models['liquid']   # flash-lite cannot read images
 
         chain = [model_name]
         if fallback:
@@ -3667,39 +3958,7 @@ GENERATION RULES:
         return None
 
     def process_file(self, file) -> str:
-        """
-        Process uploaded files and extract content
-
-        Args:
-            file: Flask file upload object
-
-        Returns:
-            Extracted text content
-        """
-        filename = file.filename.lower()
-
-        try:
-            if filename.endswith('.pdf'):
-                return self._extract_pdf_text(file)
-            elif filename.endswith(('.txt', '.md', '.py', '.js', '.jsx', '.ts', '.tsx', '.css', '.html')):
-                return file.read().decode('utf-8')
-            elif filename.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
-                raw = file.read()
-                ext = filename.rsplit('.', 1)[-1].lower()
-                mime_map = {
-                    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-                    'png': 'image/png', 'gif': 'image/gif', 'webp': 'image/webp'
-                }
-                return json.dumps({
-                    '__image__': True,
-                    'mime_type': mime_map.get(ext, 'image/png'),
-                    'raw_bytes': base64.b64encode(raw).decode('utf-8'),
-                })
-            else:
-                return f'[Unsupported file type: {filename}]'
-        except Exception as e:
-            logger.error(f'Error processing file {filename}: {e}', exc_info=True)
-            return f'[Error processing file: {filename}]'
+        return _process_uploaded_file(file, self._extract_pdf_text)
 
     def _extract_pdf_text(self, file) -> str:
         """Extract text from PDF file"""

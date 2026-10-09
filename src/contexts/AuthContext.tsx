@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
-import { api, User } from '@/services/api';
+import { api, User, assetUrl } from '@/services/api';
 import { onAppResume, isNative } from '@/lib/native';
 
 interface AuthContextType {
@@ -57,7 +57,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<User | null>(cached.current);
   const [loading, setLoading] = useState(!cached.current);
 
-  const remember = useCallback((u: User | null) => {
+  const remember = useCallback((raw: User | null) => {
+    const u = raw ? { ...raw, avatar_url: assetUrl(raw.avatar_url) } : raw;
     setUser(u);
     try {
       if (u) localStorage.setItem(CACHE_KEY, JSON.stringify(u));
@@ -144,7 +145,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       const next = {
         ...prev,
         ...(result.name ? { name: result.name } : {}),
-        ...(result.avatar_url ? { avatar_url: result.avatar_url } : {}),
+        ...(result.avatar_url ? { avatar_url: assetUrl(result.avatar_url) } : {}),
       };
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(next)); } catch { /* noop */ }
       return next;

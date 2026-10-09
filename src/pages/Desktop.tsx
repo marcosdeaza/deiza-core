@@ -1,21 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, Code2, Copy, Download, MessageSquare, Terminal } from 'lucide-react';
+import { AppWindow, ArrowLeft, Check, Code2, Copy, Download, MessageSquare, Terminal } from 'lucide-react';
 import { toast } from 'sonner';
 import AmbientRose from '@/components/deiza/AmbientRose';
 import RoseMark from '@/components/deiza/RoseMark';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
-  DESKTOP_INSTALL, FALLBACK_RELEASE, desktopBridge, desktopFileUrl, detectDesktopOS, detectMacArch, fetchDesktopRelease,
-  type DesktopOS, type DesktopRelease,
+  DESKTOP_INSTALL, FALLBACK_RELEASE, desktopBridge, desktopFileUrl, detectCpuArch, detectDesktopOS, fetchDesktopRelease,
+  installWebApp, isInstalledWebApp, onWebAppInstallChange, webAppInstallable,
+  type DesktopFileKey, type DesktopOS, type DesktopRelease,
 } from '@/lib/desktop';
 
-type Tab = 'mac' | 'windows';
+type Tab = 'mac' | 'windows' | 'chromeos' | 'linux';
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'mac', label: 'macOS' },
+  { key: 'windows', label: 'Windows' },
+  { key: 'chromeos', label: 'Chromebook' },
+  { key: 'linux', label: 'Linux' },
+];
 
 const fmtSize = (bytes?: number) => (bytes ? `${Math.round(bytes / 1048576)} MB` : '');
 
-/** Deiza for desktop: download page (macOS + Windows). */
+/** Deiza for desktop: download page (macOS, Windows, Chromebook, Linux). */
 export default function Desktop() {
   const navigate = useNavigate();
   const { t } = useLanguage();
@@ -24,21 +32,38 @@ export default function Desktop() {
   const [arch, setArch] = useState<'arm64' | 'x64' | 'unknown'>('unknown');
   const [tab, setTab] = useState<Tab>('mac');
   const [copied, setCopied] = useState<string | null>(null);
+  const [webApp, setWebApp] = useState<'installed' | 'ready' | 'manual'>('manual');
   const bridge = desktopBridge();
 
   useEffect(() => {
     const detected = detectDesktopOS();
     setOs(detected);
-    if (detected === 'windows') setTab('windows');
-    if (detected === 'mac') detectMacArch().then(setArch);
+    if (detected === 'windows' || detected === 'chromeos' || detected === 'linux') setTab(detected);
+    if (detected !== 'windows' && detected !== 'mobile') detectCpuArch().then(setArch);
     fetchDesktopRelease().then(setRelease);
     document.title = `${t('dk.meta.title')} · Deiza`;
   }, [t]);
 
+  useEffect(() => {
+    const sync = () => setWebApp(isInstalledWebApp() ? 'installed' : webAppInstallable() ? 'ready' : 'manual');
+    sync();
+    return onWebAppInstallChange(sync);
+  }, []);
+
+  const installAsWebApp = async () => {
+    if (await installWebApp() === 'accepted') toast.success(t('dk.cros.web.done'));
+  };
+
   const macKey = arch === 'x64' ? 'mac-x64' : 'mac-arm64';
+  const debKey: DesktopFileKey = arch === 'arm64' ? 'linux-deb-arm64' : 'linux-deb';
   const primary = os === 'windows'
     ? { href: desktopFileUrl(release, 'win-x64'), label: t('dk.cta.win'), size: release.sizes?.['win-x64'] }
-    : { href: desktopFileUrl(release, macKey), label: t('dk.cta.mac'), size: release.sizes?.[macKey] };
+    : os === 'chromeos'
+      // Without Linux turned on a .deb does nothing on a Chromebook: lead to the two options instead.
+      ? { href: '#instalar', label: t('dk.cta.cros'), size: undefined }
+      : os === 'linux' && desktopFileUrl(release, debKey)
+        ? { href: desktopFileUrl(release, debKey), label: t('dk.cta.linux'), size: release.sizes?.[debKey] }
+        : { href: desktopFileUrl(release, macKey), label: t('dk.cta.mac'), size: release.sizes?.[macKey] };
 
   const copy = (text: string, id: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -79,7 +104,7 @@ export default function Desktop() {
     </div>
   );
 
-  const DownloadRow = ({ href, title, sub, size, recommended }: { href: string; title: string; sub: string; size?: number; recommended?: boolean }) => (
+  const DownloadRow = ({ href, title, sub, size, recommended }: { href: string; title: string; sub: string; size?: number; recommended?: boolean }) => (!href ? null :
     <a
       href={href}
       className={`group flex items-center gap-4 rounded-2xl px-4 py-3.5 border transition-colors focus-ring ${recommended ? 'border-primary/40 bg-primary/[0.06] hover:bg-primary/10' : 'border-border/40 bg-card/60 hover:bg-muted/50'}`}
@@ -93,6 +118,13 @@ export default function Desktop() {
       </span>
       {recommended && <span className="hidden sm:inline font-body text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">{t('dk.recommended')}</span>}
     </a>
+  );
+
+  const Step = ({ n, children }: { n: number; children: ReactNode }) => (
+    <li className="flex gap-3 font-body text-sm text-foreground/85 leading-relaxed">
+      <span className="w-6 h-6 rounded-full border border-border/60 flex items-center justify-center shrink-0 font-body text-xs text-muted-foreground">{n}</span>
+      <div className="flex-1 min-w-0 space-y-2.5">{children}</div>
+    </li>
   );
 
   return (
@@ -141,9 +173,11 @@ export default function Desktop() {
                   <a href={primary.href} className="inline-flex items-center gap-2.5 rounded-2xl bg-primary text-primary-foreground px-6 py-3.5 font-body text-sm font-semibold deiza-shadow hover:brightness-110 transition focus-ring">
                     <Download className="w-4 h-4" /> {primary.label}
                   </a>
-                  <a href="#instalar" className="inline-flex items-center gap-2 rounded-2xl px-5 py-3.5 font-body text-sm font-medium border border-border/50 bg-card/60 hover:bg-muted/50 transition-colors focus-ring">
-                    {t('dk.cta.other')}
-                  </a>
+                  {os !== 'chromeos' && (
+                    <a href="#instalar" className="inline-flex items-center gap-2 rounded-2xl px-5 py-3.5 font-body text-sm font-medium border border-border/50 bg-card/60 hover:bg-muted/50 transition-colors focus-ring">
+                      {t('dk.cta.other')}
+                    </a>
+                  )}
                 </div>
               )}
               <p className="font-body text-xs text-muted-foreground/70 mt-4">
@@ -206,16 +240,16 @@ export default function Desktop() {
                 <h2 className="font-display text-3xl tracking-tight">{t('dk.install.title')}</h2>
                 <p className="font-body text-sm text-muted-foreground mt-1.5">{t('dk.install.sub')}</p>
               </div>
-              <div className="inline-flex p-1 rounded-2xl bg-muted/50 border border-border/40 self-start" role="tablist">
-                {(['mac', 'windows'] as Tab[]).map(k => (
+              <div className="grid grid-cols-2 sm:inline-flex p-1 rounded-2xl bg-muted/50 border border-border/40 self-stretch sm:self-start" role="tablist">
+                {TABS.map(({ key, label }) => (
                   <button
-                    key={k}
+                    key={key}
                     role="tab"
-                    aria-selected={tab === k}
-                    onClick={() => setTab(k)}
-                    className={`px-4 py-2 rounded-xl font-body text-xs font-semibold transition-colors focus-ring ${tab === k ? 'bg-card text-foreground deiza-shadow' : 'text-muted-foreground hover:text-foreground'}`}
+                    aria-selected={tab === key}
+                    onClick={() => setTab(key)}
+                    className={`px-2.5 sm:px-4 py-2 rounded-xl font-body text-xs font-semibold transition-colors focus-ring ${tab === key ? 'bg-card text-foreground deiza-shadow' : 'text-muted-foreground hover:text-foreground'}`}
                   >
-                    {k === 'mac' ? 'macOS' : 'Windows'}
+                    {label}
                   </button>
                 ))}
               </div>
@@ -230,13 +264,71 @@ export default function Desktop() {
                 <DownloadRow href={desktopFileUrl(release, 'mac-x64')} title={t('dk.install.mac.intel')} sub=".dmg" size={release.sizes?.['mac-x64']} recommended={arch === 'x64'} />
                 <FirstOpen os="mac" />
               </div>
-            ) : (
+            ) : tab === 'windows' ? (
               <div className="mt-6 space-y-3">
                 <p className="font-body text-sm text-foreground/90">{t('dk.install.fast.win')}</p>
                 <Command id="win" cmd={DESKTOP_INSTALL.windows} />
                 <p className="font-body text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/70 pt-4">{t('dk.install.or')}</p>
                 <DownloadRow href={desktopFileUrl(release, 'win-x64')} title={t('dk.install.win')} sub=".exe" size={release.sizes?.['win-x64']} recommended />
                 <FirstOpen os="win" />
+              </div>
+            ) : tab === 'chromeos' ? (
+              <div className="mt-6 space-y-4">
+                <p className="font-body text-sm text-foreground/90 max-w-2xl">{t('dk.cros.lead')}</p>
+
+                <div className="rounded-2xl border border-primary/30 bg-primary/[0.04] px-5 py-5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                    <p className="font-display text-xl">{t('dk.cros.full.title')}</p>
+                    <span className="font-body text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">{t('dk.cros.full.tag')}</span>
+                  </div>
+                  <p className="font-body text-sm text-muted-foreground leading-relaxed mt-1.5">{t('dk.cros.full.desc')}</p>
+                  <ol className="mt-5 space-y-4">
+                    <Step n={1}><p>{t('dk.cros.step1')}</p></Step>
+                    <Step n={2}>
+                      <p>{t('dk.cros.step2')}</p>
+                      <DownloadRow href={desktopFileUrl(release, 'linux-deb')} title={t('dk.cros.arch.x64')} sub=".deb" size={release.sizes?.['linux-deb']} recommended={arch !== 'arm64'} />
+                      <DownloadRow href={desktopFileUrl(release, 'linux-deb-arm64')} title={t('dk.cros.arch.arm')} sub=".deb" size={release.sizes?.['linux-deb-arm64']} recommended={arch === 'arm64'} />
+                      <p>{t('dk.cros.step2b')}</p>
+                    </Step>
+                    <Step n={3}><p>{t('dk.cros.step3')}</p></Step>
+                  </ol>
+                  <p className="font-body text-sm text-foreground/90 mt-6">{t('dk.cros.cmd')}</p>
+                  <div className="mt-2.5"><Command id="cros" cmd={DESKTOP_INSTALL.linux} /></div>
+                  <ul className="mt-5 space-y-2">
+                    {(['folders', 'mic'] as const).map(k => (
+                      <li key={k} className="flex gap-2.5 font-body text-xs text-muted-foreground leading-relaxed">
+                        <span className="mt-[7px] w-1 h-1 rounded-full bg-primary/70 shrink-0" aria-hidden="true" />
+                        <span>{t(`dk.cros.tip.${k}`)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="rounded-2xl border border-border/40 bg-muted/30 px-5 py-5">
+                  <p className="font-display text-xl">{t('dk.cros.web.title')}</p>
+                  <p className="font-body text-sm text-muted-foreground leading-relaxed mt-1.5 max-w-2xl">{t('dk.cros.web.desc')}</p>
+                  <div className="mt-4">
+                    {webApp === 'installed' ? (
+                      <p className="inline-flex items-center gap-2 font-body text-sm text-foreground/90"><Check className="w-4 h-4 text-primary" /> {t('dk.cros.web.installed')}</p>
+                    ) : webApp === 'ready' ? (
+                      <button onClick={installAsWebApp} className="inline-flex items-center gap-2 rounded-2xl px-5 py-3 font-body text-sm font-semibold border border-border/50 bg-card hover:bg-muted/50 transition-colors focus-ring">
+                        <AppWindow className="w-4 h-4" /> {t('dk.cros.web.cta')}
+                      </button>
+                    ) : (
+                      <p className="font-body text-sm text-foreground/85 leading-relaxed max-w-2xl">{t('dk.cros.web.manual')}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-6 space-y-3">
+                <p className="font-body text-sm text-foreground/90">{t('dk.install.fast.linux')}</p>
+                <Command id="linux" cmd={DESKTOP_INSTALL.linux} />
+                <p className="font-body text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/70 pt-4">{t('dk.install.or')}</p>
+                <DownloadRow href={desktopFileUrl(release, 'linux-deb')} title={t('dk.linux.deb.x64')} sub=".deb" size={release.sizes?.['linux-deb']} recommended={arch !== 'arm64'} />
+                <DownloadRow href={desktopFileUrl(release, 'linux-deb-arm64')} title={t('dk.linux.deb.arm')} sub=".deb" size={release.sizes?.['linux-deb-arm64']} recommended={arch === 'arm64'} />
+                <DownloadRow href={desktopFileUrl(release, 'linux-x64')} title={t('dk.linux.img.x64')} sub="AppImage" size={release.sizes?.['linux-x64']} />
+                <DownloadRow href={desktopFileUrl(release, 'linux-arm64')} title={t('dk.linux.img.arm')} sub="AppImage" size={release.sizes?.['linux-arm64']} />
               </div>
             )}
           </div>

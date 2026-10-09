@@ -1,10 +1,15 @@
 import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { motion } from 'framer-motion';
-import { Mic, Check, X, Loader2 } from 'lucide-react';
+import { Mic, Check, X, Loader2, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useHaptics } from '@/hooks/useHaptics';
 import { authHeaders } from '@/services/api';
+import { BASE_AUDIO, readInput, readInputName, writeInput, rememberInputName, cleanMicName, listInputs } from '@/lib/micInput';
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel,
+  DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 
 export type VoiceState = 'idle' | 'recording' | 'transcribing';
 
@@ -32,6 +37,7 @@ interface AudioRecorderProps {
 }
 
 const MAX_SECONDS = 600;
+
 
 /*
  * Segmented dictation: while the user speaks, the recording is cut at natural pauses and each
@@ -262,6 +268,35 @@ const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>(functi
     }
   }, [readRms, newSegment, closeSegment]);
 
+  const [inputId, setInputId] = useState<string>(() => readInput());
+  const [inputName, setInputName] = useState<string>(() => readInputName());
+  useEffect(() => {
+    const sync = () => { setInputId(readInput()); setInputName(readInputName()); };
+    window.addEventListener('deiza:audio-input', sync);
+    window.addEventListener('storage', sync);
+    return () => { window.removeEventListener('deiza:audio-input', sync); window.removeEventListener('storage', sync); };
+  }, []);
+  const [inputs, setInputs] = useState<MediaDeviceInfo[]>([]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [activeLabel, setActiveLabel] = useState('');
+  const pressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressedRef = useRef(false);
+  const openMenu = useCallback((open: boolean) => {
+    setMenuOpen(open);
+    if (open) void listInputs().then(setInputs).catch(() => setInputs([]));
+  }, []);
+  const restartRef = useRef<(() => void) | null>(null);
+  const chooseInput = useCallback((id: string) => {
+    const changed = id !== readInput();
+    const label = id === 'default' ? '' : (inputs.find(d => d.deviceId === id)?.label || '');
+    writeInput(id, label);
+    setInputId(id);
+    setInputName(label ? cleanMicName(label) : '');
+    if (changed && stateRef.current === 'recording') restartRef.current?.();
+    const name = id === 'default' ? t('aud.input.default') : (inputs.find(d => d.deviceId === id)?.label || t('aud.input.mic', { n: inputs.findIndex(d => d.deviceId === id) + 1 }));
+    toast(t('aud.input.set', { name }));
+  }, [inputs, t]);
+
   const start = useCallback(async () => {
     if (disabled || stateRef.current !== 'idle') return;
     if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
@@ -272,10 +307,24 @@ const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>(functi
       onStart?.();
       cancelledRef.current = false;
       runRef.current += 1;
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      const inputId = readInput();
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: inputId !== 'default' ? { ...BASE_AUDIO, deviceId: { exact: inputId } } : BASE_AUDIO,
+        });
+      } catch (e: any) {
+        // The chosen microphone was unplugged: fall back to the system default
+        if (inputId === 'default' || !['OverconstrainedError', 'NotFoundError', 'NotReadableError'].includes(e?.name)) throw e;
+        writeInput('default');
+        setInputId('default');
+        setInputName('');
+        stream = await navigator.mediaDevices.getUserMedia({ audio: BASE_AUDIO });
+      }
       streamRef.current = stream;
+      const trackLabel = stream.getAudioTracks()[0]?.label || '';
+      setActiveLabel(trackLabel);
+      rememberInputName(trackLabel);
       mimeRef.current = pickMimeType();
       pendingRef.current = [];
       textsRef.current = [];
@@ -359,6 +408,7 @@ const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>(functi
   }, [haptic, releaseMedia, setState]);
 
   useImperativeHandle(ref, () => ({ start, stop: () => { void stop(); }, cancel }), [start, stop, cancel]);
+  restartRef.current = () => { cancel(); setTimeout(() => { void start(); }, 120); };
 
   // Parent sent the message while recording → discard silently
   const prevStopRef = useRef(0);
@@ -373,24 +423,81 @@ const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>(functi
   const iconBtn = `relative flex items-center justify-center ${dim} rounded-full transition-colors focus-ring shrink-0`;
   const pop = 'animate-in fade-in zoom-in-75 duration-150';
 
+
+  const inputMenu = (
+    <DropdownMenuContent align="end" side="top" sideOffset={8} className="min-w-[230px] max-w-[320px]">
+      <DropdownMenuLabel className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">{t('aud.input.title')}</DropdownMenuLabel>
+      <DropdownMenuSeparator />
+      <DropdownMenuRadioGroup value={inputId} onValueChange={chooseInput}>
+        <DropdownMenuRadioItem value="default" className="text-[13px]">{t('aud.input.default')}</DropdownMenuRadioItem>
+        {inputs.map((d, i) => (
+          <DropdownMenuRadioItem key={d.deviceId} value={d.deviceId} className="text-[13px]">
+            <span className="truncate">{d.label || t('aud.input.mic', { n: i + 1 })}</span>
+          </DropdownMenuRadioItem>
+        ))}
+      </DropdownMenuRadioGroup>
+    </DropdownMenuContent>
+  );
+  const shortLabel = cleanMicName(activeLabel) || inputName || t('aud.input.default');
+  const idleName = inputName || t('aud.input.default');
+
   return (
     <>
       {state === 'idle' && showIdle && (
-        <motion.button
-          key="mic"
-          type="button"
-          onClick={start}
-          disabled={disabled}
-          className={`${iconBtn} ${pop} ${size === 'md' ? 'bg-muted/80 text-foreground/80 hover:bg-muted hover:text-foreground shadow-sm' : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/70'} disabled:opacity-40`}
-          aria-label={t('aud.dictate')}
-          title={t('aud.dictate')}
-          whileTap={{ scale: 0.88 }}
-        >
-          <Mic className="w-[18px] h-[18px]" strokeWidth={1.9} />
-        </motion.button>
+        <div key="mic" className={`group relative flex items-center ${pop}`}>
+          <DropdownMenu open={menuOpen} onOpenChange={openMenu} modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                disabled={disabled}
+                className={`hidden md:flex items-center gap-1.5 h-7 mr-1 rounded-full overflow-hidden whitespace-nowrap text-[11.5px] text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-all duration-200 focus-ring disabled:hidden ${menuOpen ? 'max-w-[200px] px-2.5 opacity-100' : 'max-w-0 px-0 opacity-0 group-hover:max-w-[200px] group-hover:px-2.5 group-hover:opacity-100 focus-visible:max-w-[200px] focus-visible:px-2.5 focus-visible:opacity-100'}`}
+                aria-label={t('aud.input.change')}
+                title={t('aud.input.change')}
+              >
+                <span className="text-muted-foreground/60">{t('aud.input.title')}:</span>
+                <span className="truncate max-w-[120px] text-foreground/80">{idleName}</span>
+              </button>
+            </DropdownMenuTrigger>
+            {inputMenu}
+          </DropdownMenu>
+          <motion.button
+            type="button"
+            onClick={() => { if (longPressedRef.current) { longPressedRef.current = false; return; } void start(); }}
+            onContextMenu={(e) => { e.preventDefault(); openMenu(true); }}
+            onPointerDown={(e) => {
+              if (e.pointerType !== 'touch') return;
+              longPressedRef.current = false;
+              pressRef.current = setTimeout(() => { longPressedRef.current = true; haptic('light'); openMenu(true); }, 520);
+            }}
+            onPointerUp={() => { if (pressRef.current) clearTimeout(pressRef.current); }}
+            onPointerLeave={() => { if (pressRef.current) clearTimeout(pressRef.current); }}
+            disabled={disabled}
+            className={`${iconBtn} ${size === 'md' ? 'bg-muted/80 text-foreground/80 hover:bg-muted hover:text-foreground shadow-sm' : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/70'} disabled:opacity-40`}
+            aria-label={t('aud.dictate')}
+            title={t('aud.dictate')}
+            whileTap={{ scale: 0.88 }}
+          >
+            <Mic className="w-[18px] h-[18px]" strokeWidth={1.9} />
+          </motion.button>
+        </div>
       )}
       {state === 'recording' && (
         <div key="rec" className={`flex items-center gap-1 ${pop}`}>
+          <DropdownMenu open={menuOpen} onOpenChange={openMenu} modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1 h-7 max-w-[150px] pl-2 pr-1.5 rounded-full text-[11px] text-muted-foreground/80 hover:text-foreground hover:bg-muted/70 transition-colors focus-ring"
+                aria-label={t('aud.input.change')}
+                title={t('aud.input.change')}
+              >
+                <Mic className="w-3 h-3 shrink-0 text-primary" strokeWidth={2.2} />
+                <span className="truncate hidden sm:inline">{shortLabel}</span>
+                <ChevronDown className="w-3 h-3 shrink-0 opacity-70" strokeWidth={2.2} />
+              </button>
+            </DropdownMenuTrigger>
+            {inputMenu}
+          </DropdownMenu>
           <motion.button
             type="button"
             onClick={cancel}

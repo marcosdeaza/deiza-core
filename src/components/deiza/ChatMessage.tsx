@@ -16,7 +16,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import { preprocessLaTeX } from '@/lib/latex';
+import { preprocessLaTeX, KATEX_OPTIONS } from '@/lib/latex';
 
 /** Route remote web photos through the server proxy so hotlink-protected and
  * referrer-blocked images always render in chat and search results. */
@@ -913,7 +913,7 @@ const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateA
         <div className="prose-deiza font-body text-[15px] leading-[1.75] sm:text-[15.5px] sm:leading-[1.85] [overflow-wrap:anywhere]" {...longPress}>
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[[rehypeKatex, { output: 'htmlAndMathml', strict: false, trust: true }]]}
+            rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}
             components={mdComponents}
           >
             {processedMarkdown}

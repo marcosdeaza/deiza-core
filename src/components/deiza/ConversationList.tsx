@@ -162,6 +162,9 @@ const ConversationList = ({
                     />
                   ) : (
                     <span className={`flex-1 min-w-0 truncate font-body text-[13px] leading-5 ${active ? 'font-medium' : ''}`}>
+                      {chat.mode === 'work' && (
+                        <span className="mr-1.5 align-[1px] font-body text-[9px] uppercase tracking-[0.14em] text-primary/80">Work</span>
+                      )}{/* deiza work v1 */}
                       {chat.title}
                     </span>
                   )}

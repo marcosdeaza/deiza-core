@@ -23,7 +23,16 @@ const Plans = lazy(() => lazyRetry(() => import('./pages/Plans')));
 const Redeem = lazy(() => lazyRetry(() => import('./pages/Redeem')));
 const NotFound = lazy(() => lazyRetry(() => import('./pages/NotFound')));
 const News = lazy(() => lazyRetry(() => import('./pages/News')));
-const Docs = lazy(() => lazyRetry(() => import('./pages/Docs')));
+const ApiKeys = lazy(() => lazyRetry(() => import('./pages/ApiKeys')));
+
+/** The API docs are a static page (/docs/), readable without JavaScript by people, crawlers and AIs. */
+const StaticDocs = () => {
+  useEffect(() => {
+    if (isNative()) { window.open('https://deiza.org/docs/', '_blank'); window.history.back(); }
+    else window.location.replace('/docs/');
+  }, []);
+  return null;
+};
 const SharedArtifactPage = lazy(() => lazyRetry(() => import('./pages/SharedArtifact')));
 const SharedConversationPage = lazy(() => lazyRetry(() => import('./pages/SharedConversation')));
 const SettingsPage = lazy(() => lazyRetry(() => import('./pages/Settings')));
@@ -137,7 +146,11 @@ const App = () => (
                   <Route path="/download/desktop" element={<DesktopPage />} />
                   <Route path="/noticias" element={<News />} />
                   <Route path="/news" element={<News />} />
-                  <Route path="/docs" element={<Docs />} />
+                  <Route path="/docs" element={<StaticDocs />} />
+                  <Route path="/api-keys" element={<ApiKeys />} />
+                  <Route path="/api" element={<Navigate to="/api-keys" replace />} />
+                  <Route path="/console" element={<Navigate to="/api-keys" replace />} />
+                  <Route path="/settings/api" element={<Navigate to="/api-keys" replace />} />
                   <Route path="/legal" element={<Navigate to="/legal/aviso-legal" replace />} />
                   <Route path="/legal/:doc" element={<LegalPage />} />
                   <Route path="/privacidad" element={<Navigate to="/legal/privacidad" replace />} />
@@ -148,7 +161,7 @@ const App = () => (
                   <Route path="/reembolsos" element={<Navigate to="/legal/reembolsos" replace />} />
                   <Route path="/refunds" element={<Navigate to="/legal/reembolsos" replace />} />
                   <Route path="/aviso-legal" element={<Navigate to="/legal/aviso-legal" replace />} />
-                  <Route path="/documentacion" element={<Docs />} />
+                  <Route path="/documentacion" element={<StaticDocs />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
                 {!native && !isDesktopApp() && <CookieNotice />}

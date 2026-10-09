@@ -11,6 +11,7 @@ import { isDesktopApp } from '@/lib/desktop';
 import { desktopLaunchActive } from '@/lib/launch';
 import RoseMark from './RoseMark';
 import DesktopUpdateRow from './DesktopUpdateRow';
+import { countdownLabel, resetDateLabel, secondsUntil } from '@/lib/usageReset';
 
 export interface SidebarUsage {
   tokens_used: number;
@@ -22,6 +23,9 @@ export interface SidebarUsage {
   weekly_remaining?: number;
   weekly_pct?: number;
   weekly_exhausted?: boolean;
+  /** ISO time when the weekly period resets (fixed 7-day cycle) */
+  weekly_reset_at?: string | null;
+  weekly_reset_in_seconds?: number | null;
   /** ok | warning | grace | exhausted */
   state?: string;
 }
@@ -70,7 +74,7 @@ const PLAN_LABEL: Record<string, string> = { free: 'Free', friend: 'Friend', sig
  * brand + new chat, collapsible projects, grouped conversations, account footer.
  */
 const SidebarContent = (p: SidebarContentProps) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const navigate = useNavigate();
   const native = isNative();
   const [projectsOpen, setProjectsOpen] = useState(() => {
@@ -95,6 +99,9 @@ const SidebarContent = (p: SidebarContentProps) => {
     ? Math.min(100, Math.round((p.planUsage.tokens_used / p.planUsage.token_limit) * 100))
     : 0;
   const grace = p.planUsage?.state === 'grace';
+  const weekIn = countdownLabel(p.planUsage?.weekly_reset_in_seconds ?? secondsUntil(p.planUsage?.weekly_reset_at));
+  const weekWhen = resetDateLabel(p.planUsage?.weekly_reset_at, language);
+  const weekWhenLong = resetDateLabel(p.planUsage?.weekly_reset_at, language, true);
   const barTone = grace ? 'bg-deiza-ochre' : p.planUsage?.exhausted ? 'bg-red-400' : pct >= 80 ? 'bg-amber-400' : 'bg-primary';
 
   return (
@@ -285,10 +292,15 @@ const SidebarContent = (p: SidebarContentProps) => {
                 </div>
                 <div className="w-full h-[2.5px] rounded-full bg-muted/40 overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-emerald-400/80 transition-all duration-300"
+                    className={`h-full rounded-full transition-all duration-300 ${p.planUsage.weekly_exhausted ? 'bg-red-400' : 'bg-emerald-400/80'}`}
                     style={{ width: `${Math.min(100, Math.max(0, p.planUsage.weekly_pct || 0))}%` }}
                   />
                 </div>
+                {weekIn && (
+                  <p className="mt-1 truncate font-body text-[10px] tabular-nums text-muted-foreground/60" title={weekWhenLong || undefined}>
+                    {t('ws.usage.weekly_resets', { in: weekIn, when: weekWhen || '' })}
+                  </p>
+                )}
               </div>
             )}
           </button>

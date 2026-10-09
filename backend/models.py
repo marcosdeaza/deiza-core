@@ -42,26 +42,26 @@ def usage_units(prompt=0, completion=0, cached=0, reread=0, reasoning=0) -> int:
 # plus a weekly cap of `weekly_windows` full windows.
 # Calibration (medido en producción, sep-2026): a Liquid chat turn with history ~15-25k UU; a
 # medium Code task (30 agent rounds) ~0.4M UU with Liquid and ~0.6M with Solid (it caches).
-# Friend covers a long afternoon of coding (or ~150 chat turns) per window; Signet ~2.7x that.
+# Friend covers a long afternoon of coding (or ~150 chat turns) per window; Signet 2x that.
 PLANS = {
     'free': {
         'name': 'Free',
         'price_eur': 0,
         'token_limit': 300000,
         'weekly_windows': 5,
+        'weekly_limit': 2500000,
         'models': ['fast', 'pro', 'ultra', 'code'],
         'reset_hours': 5,
         'projects': 1,
         'project_files': 5,
-        'model_token_limits': {
-            'pro': 150000,
-        },
+        'model_token_limits': {},   # plans v3: Liquid uses the whole window (the 150k cap felt like a wall)
     },
     'friend': {
         'name': 'Friend',
         'price_eur': 4.45,
-        'token_limit': 3000000,
+        'token_limit': 4000000,
         'weekly_windows': 8,
+        'weekly_limit': 35000000,
         'models': ['fast', 'pro', 'ultra', 'design', 'code'],
         'reset_hours': 5,
         'projects': 10,
@@ -75,6 +75,7 @@ PLANS = {
         'price_eur': 7.75,
         'token_limit': 8000000,
         'weekly_windows': 10,
+        'weekly_limit': 85000000,
         'models': ['fast', 'pro', 'ultra', 'design', 'code'],
         'reset_hours': 5,
         'projects': 50,
@@ -104,6 +105,11 @@ VIDEO_CLIP_COST = 300000   # UU per generated video clip
 WEEKLY_WINDOWS = 8
 WEEK = timedelta(days=7)
 
+# weekly reset v1 (4-oct-2026): the week is a fixed 7-day period, like a rolling window's weekly limit. It
+# starts on the hour the account was created and repeats every 7 days, so every user always knows
+# when the weekly cap resets (whole, not little by little). Accounts without a date use this epoch.
+WEEK_EPOCH = datetime(2026, 1, 5)
+
 # Courtesy margin ("cortesía"): when the window or the week runs out while the user is working,
 # the work in progress is not cut. Up to GRACE_FRACTION of the window more is served, and the
 # model is told to wrap up: reach a stable point, save or deploy if that was the task, and leave
@@ -119,7 +125,10 @@ def get_multiplier(model: str, plan: str) -> float:
 
 
 def weekly_limit_for(plan_key: str) -> int:
+    # plans v3: explicit weekly caps (Free 2.5M, Friend 35M, Signet 85M); windows x N as a fallback
     info = PLANS.get(plan_key, PLANS['free'])
+    if info.get('weekly_limit'):
+        return int(info['weekly_limit'])
     return int(info['token_limit'] * info.get('weekly_windows', WEEKLY_WINDOWS))
 
 
@@ -146,6 +155,20 @@ class User(db.Model):
     name = db.Column(db.String(255))
     picture = db.Column(db.String(512))
     avatar_url = db.Column(db.String(500), nullable=True)
+
+    def public_avatar_url(self):
+        """avatar_url only when the uploaded file still exists (older builds kept avatars inside the
+        container, so a redeploy left dangling URLs that showed a broken image on every device)."""
+        url = self.avatar_url or None
+        if not url or not url.startswith('/api/files/avatar/'):
+            return url
+        import os
+        name = url.split('/api/files/avatar/', 1)[1].split('?', 1)[0]
+        base = os.path.dirname(__file__)
+        for folder in (os.path.join(base, 'instance', 'avatars'), os.path.join(base, 'uploads', 'avatars')):
+            if os.path.isfile(os.path.join(folder, name)):
+                return url
+        return None
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime, default=datetime.utcnow)
     
@@ -220,25 +243,26 @@ class User(db.Model):
         # All previous windows have expired
         return None, [], None
 
+    def get_weekly_period(self, now=None) -> tuple:
+        """(start, end) of the current weekly period. Fixed 7-day periods anchored on the hour the
+        account was created (weekly reset v1), so the reset moment is known in advance."""
+        now = now or datetime.utcnow()
+        anchor = (self.created_at or WEEK_EPOCH).replace(minute=0, second=0, microsecond=0)
+        if anchor > now:
+            anchor = anchor - WEEK * (((anchor - now) // WEEK) + 1)
+        start = anchor + WEEK * ((now - anchor) // WEEK)
+        return start, start + WEEK
+
     def get_weekly_usage(self) -> dict:
-        """Weighted tokens in the last 7 days against the weekly cap, and when enough of it ages out."""
+        """Weighted tokens in the current weekly period against the weekly cap, and when it resets."""
         now = datetime.utcnow()
-        plan_info = PLANS.get(self.get_plan(), PLANS['free'])
         limit = weekly_limit_for(self.get_plan())
+        start, end = self.get_weekly_period(now)
         records = UsageWindow.query.filter(
             UsageWindow.user_id == self.id,
-            UsageWindow.created_at >= now - WEEK,
-        ).order_by(UsageWindow.created_at.asc()).all()
+            UsageWindow.created_at >= start,
+        ).all()
         used = sum(r.weighted_tokens for r in records)
-        reset_at = None
-        if used >= limit:
-            # the cap lifts once the oldest records leave the 7-day span and usage drops below it
-            over = used - limit
-            for r in records:
-                over -= r.weighted_tokens
-                if over < 0:
-                    reset_at = r.created_at + WEEK
-                    break
         remaining = max(0, limit - used)
         pct = min(100.0, round((used / limit) * 100, 1)) if limit > 0 else 0
         return {
@@ -247,7 +271,8 @@ class User(db.Model):
             'remaining': remaining,
             'pct': pct,
             'exhausted': used >= limit,
-            'reset_at': reset_at,
+            'period_start': start,
+            'reset_at': end,
         }
 
     def get_current_usage(self) -> dict:
@@ -298,6 +323,8 @@ class User(db.Model):
             'weekly_pct': weekly.get('pct', 0),
             'weekly_exhausted': weekly['exhausted'],
             'weekly_reset_at': weekly['reset_at'].isoformat() + 'Z' if weekly.get('reset_at') else None,
+            'weekly_reset_in_seconds': max(0, int((weekly['reset_at'] - now).total_seconds())) if weekly.get('reset_at') else None,
+            'weekly_period_start': weekly['period_start'].isoformat() + 'Z' if weekly.get('period_start') else None,
         }
 
         if weekly['exhausted'] and weekly['reset_at']:
@@ -506,6 +533,7 @@ class Chat(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     pinned = db.Column(db.Boolean, default=False, nullable=False)
+    mode = db.Column(db.String(16), default='chat', nullable=False, server_default='chat')  # deiza work v1: 'chat' | 'work'
     
     # Relationships
     messages = db.relationship('Message', backref='chat', lazy=True, cascade='all, delete-orphan', order_by='Message.created_at')
@@ -701,7 +729,7 @@ class ProjectFile(db.Model):
 
 
 class ApiKey(db.Model):
-    """Long-lived API key for Pragmathic Code CLI access."""
+    """Long-lived API key (public API, Deiza Code CLI)."""
     __tablename__ = 'api_keys'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -713,6 +741,11 @@ class ApiKey(db.Model):
     last_ip = db.Column(db.String(64), nullable=True)
     revoked = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # api pro v1: shown as dz_Ab3x...wxyz, request counter, where it was made, optional expiry
+    last4 = db.Column(db.String(8), nullable=True)
+    use_count = db.Column(db.Integer, default=0, nullable=False)
+    source = db.Column(db.String(20), default='web', nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=True)
 
     user = db.relationship('User', backref='api_keys', lazy=True)
 
@@ -725,4 +758,10 @@ class ApiKey(db.Model):
             'last_used_at': self.last_used_at.isoformat() if self.last_used_at else None,
             'last_ip': self.last_ip,
             'created_at': self.created_at.isoformat(),
+            'last4': self.last4,
+            'display': (self.key_prefix or '').rstrip('.').rstrip('…') + '…' + (self.last4 or ''),
+            'use_count': int(self.use_count or 0),
+            'source': self.source or ('cli' if (self.name or '').startswith('Deiza Code CLI') else 'web'),
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'expired': bool(self.expires_at and self.expires_at < datetime.utcnow()),
         }

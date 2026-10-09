@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import logo from '@/assets/logo.png';
 import AmbientRose from '@/components/deiza/AmbientRose';
 import CapuSprite from '@/components/deiza/CapuSprite';
+import { detectDesktopOS } from '@/lib/desktop';
 
 const AppleIcon = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -43,7 +44,11 @@ type PlatformTab = 'macos' | 'linux' | 'windows' | 'agent';
 
 export default function Download() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<PlatformTab>('macos');
+  // Chromebooks run Deiza Code in their Linux environment: open on that tab there.
+  const [activeTab, setActiveTab] = useState<PlatformTab>(() => {
+    const os = detectDesktopOS();
+    return os === 'windows' ? 'windows' : os === 'linux' || os === 'chromeos' ? 'linux' : 'macos';
+  });
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const copyToClipboard = (text: string, id: string) => {
@@ -260,7 +265,7 @@ export default function Download() {
               {activeTab === 'linux' && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between text-xs text-muted-foreground font-body">
-                    <span>En Terminal (Ubuntu, Debian, Fedora, Arch, WSL):</span>
+                    <span>En Terminal (Ubuntu, Debian, Fedora, Arch, WSL o el Linux de tu Chromebook):</span>
                     <span className="font-mono text-primary">curl · bash</span>
                   </div>
                   <div className="flex items-center justify-between bg-muted/70 rounded-2xl p-4 border border-border">

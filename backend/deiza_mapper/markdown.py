@@ -91,6 +91,8 @@ def md_to_html(md: str) -> str:
     # a bullet list right after a numbered one (or vice versa) needs a blank line to be a new list
     text = re.sub(r'(?m)^(\d+[.)] [^\n]*)\n(\s*[-*+] )', r'\1\n\n\2', text)
     text = re.sub(r'(?m)^([-*+] [^\n]*)\n(\s*\d+[.)] )', r'\1\n\n\2', text)
+    # a list right after a paragraph line needs a blank line (python-markdown would glue it to the paragraph)
+    text = re.sub(r'(?m)^(?![-*+] |\d+[.)] |\s|\||>|#)([^\n]+)\n(\s{0,3}(?:[-*+]|\d+[.)]) )', r'\1\n\n\2', text)
     # a table right after a paragraph needs its blank line too
     text = re.sub(r'(?m)^([^\n|>#-][^\n]*)\n(\|[^\n]+\|\n\|[\s:|-]+\|)', r'\1\n\n\2', text)
     # task lists

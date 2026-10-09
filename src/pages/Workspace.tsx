@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, Fragment } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, useMotionValue, useTransform, animate as motionAnimate } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
@@ -22,10 +22,13 @@ import ChatMessage from '@/components/deiza/ChatMessage';
 import { extractArtifact, findArtifactBlock, parseArtifactSpec } from '@/lib/artifactBlock';
 import ChatInput from '@/components/deiza/ChatInput';
 import ArtifactPanel from '@/components/deiza/ArtifactPanel';
+import WorkTrace from '@/components/deiza/WorkTrace';
+import WorkPanel from '@/components/deiza/WorkPanel';
+import { applyWorkEvent, workFromMeta, type WorkState, type WorkShot } from '@/lib/workTypes';
 import AmbientRose from '@/components/deiza/AmbientRose';
 import DeizaLoader from '@/components/deiza/DeizaLoader';
 import { toast } from 'sonner';
-import { LogOut, Plus, Trash2, MessageSquare, PanelLeftOpen, PanelLeftClose, Pencil, Check, X, Moon, Sun, Sparkles, Loader2, Settings, FolderOpen, Folder, Pin, PinOff, Share2, Palette, Search, Code2, ArrowDown, BookOpen, MonitorDown } from 'lucide-react';
+import { LogOut, Plus, Trash2, MessageSquare, PanelLeftOpen, PanelLeftClose, Pencil, Check, X, Moon, Sun, Sparkles, Loader2, Settings, FolderOpen, Folder, Pin, PinOff, Share2, Palette, Search, Code2, ArrowDown, BookOpen, MonitorDown, MonitorPlay } from 'lucide-react';
 import ActionSheet from '@/components/deiza/ActionSheet';
 import ConfirmDialog from '@/components/deiza/ConfirmDialog';
 import SidebarContent from '@/components/deiza/SidebarContent';
@@ -37,6 +40,7 @@ import { type ModelKey } from '@/components/deiza/ModelSelector';
 import { useKeyboardAvoid } from '@/hooks/useKeyboardAvoid';
 import { useHaptics } from '@/hooks/useHaptics';
 import { syncMemoryFromServer, extractAndStoreMemory } from '@/lib/memory';
+import { countdownLabel } from '@/lib/usageReset';
 
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
@@ -50,6 +54,8 @@ interface Message {
   sources?: Array<{ title: string; url: string; domain: string }>;
   /** Usage ran out during this answer: Markdown handoff (courtesy margin) */
   handoff?: { name: string; url?: string; content: string };
+  /** deiza work v1: trace of a Work job (plan, steps, files) */
+  work?: WorkState;
   /** Inline error card (kept in the thread so the user's message never vanishes) */
   error?: boolean;
   retryOf?: string;
@@ -133,13 +139,15 @@ function pickGreeting(t: (k: string, p?: Record<string, string | number>) => str
   return t(`ws.greet.${slot}.${idx}`, { name });
 }
 
-const SamplePromptCarousel = ({ lang, onPick }: { lang: string; onPick?: (phrase: string) => void }) => {
+const SamplePromptCarousel = ({ lang, onPick, work }: { lang: string; onPick?: (phrase: string) => void; work?: boolean }) => {
   const { t } = useLanguage();
   const deck = useRef<string[]>([]);
   const pos = useRef(0);
   const [phrase, setPhrase] = useState('');
   useEffect(() => {
-    const pool = SAMPLE_PROMPTS[lang] || [1, 2, 3, 4, 5, 6, 7, 8].map(i => t(`ws.sample.${i}`));
+    const pool = work
+      ? [1, 2, 3, 4, 5].map(i => t(`ws.work.sample.${i}`))
+      : SAMPLE_PROMPTS[lang] || [1, 2, 3, 4, 5, 6, 7, 8].map(i => t(`ws.sample.${i}`));
     const shuffle = () => {
       const a = [...pool];
       for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
@@ -154,7 +162,7 @@ const SamplePromptCarousel = ({ lang, onPick }: { lang: string; onPick?: (phrase
     }, 5200);
     return () => clearInterval(interval);
     // `t` changes identity once the lazy dictionary lands, so the pool re-shuffles in the right language.
-  }, [lang, t]);
+  }, [lang, t, work]);
   return (
     <button
       type="button"
@@ -205,6 +213,11 @@ const Workspace = () => {
   const [activeArtifact, setActiveArtifact] = useState<{ name: string; type: string; content?: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [model, setModelState] = useState<ModelKey>('liquid');
+  // deiza work v1: Chat | Work. Work runs the agent with tools and a live browser (WorkPanel).
+  const [workMode, setWorkMode] = useState(false);
+  const [workPanelOpen, setWorkPanelOpen] = useState(false);
+  const [workShot, setWorkShot] = useState<WorkShot | null>(null);
+  const workPanelDismissedRef = useRef(false);
   const setModel = (newModel: ModelKey) => {
     setModelState(newModel);
     if (currentChatId) {
@@ -224,6 +237,8 @@ const Workspace = () => {
     weekly_remaining?: number;
     weekly_pct?: number;
     weekly_exhausted?: boolean;
+    weekly_reset_at?: string | null;
+    weekly_reset_in_seconds?: number | null;
     /** ok | warning | grace (courtesy margin while finishing work) | exhausted */
     state?: string;
   } | null>(null);
@@ -349,16 +364,7 @@ const Workspace = () => {
   const inDesktopApp = isDesktopApp();
   const showDesktopDownload = !inDesktopApp && !isNative();
   const openCode = useCallback(() => {
-    if (userPlan === 'free') {
-      toast.info(
-        t('ws.err.code_plan') || 'Deiza Code está reservado para cuentas con planes de pago.',
-        {
-          action: { label: t('ws.plan.viewplans') || 'Ver planes', onClick: () => navigate('/plans') },
-          duration: 7000,
-        }
-      );
-      return;
-    }
+    // Everyone can open Code to see how it works; running it needs Friend or Signet (enforced by the API).
     const bridge = desktopBridge();
     if (bridge) bridge.openCode();
     else navigate('/code');
@@ -645,12 +651,14 @@ const Workspace = () => {
           sources: msg.meta?.sources?.length ? msg.meta.sources : undefined,
           images: msg.meta?.images?.length ? msg.meta.images : undefined,
           handoff: msg.meta?.handoff?.content ? msg.meta.handoff : undefined,
+          work: workFromMeta(msg.meta?.work),
           fromHistory: true,
         };
       });
       scrollIntentRef.current = 'load';
       setMessages(mapped);
       setCurrentChatId(cid);
+      setWorkMode((response as any).chat?.mode === 'work');
     } catch (e: any) {
       const errMsg = String(e?.message || '');
       if (errMsg.includes('not found') || errMsg.includes('404')) {
@@ -1025,6 +1033,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
       const demoHistory = messages.map(m => ({ role: m.role, content: m.content }));
       // Add empty streaming message
       setMessages(prev => [...prev, { id: streamingId, role: 'assistant', content: '' }]);
+    if (workMode) workPanelDismissedRef.current = false;
 
       cancelStreamRef.current = api.streamDemoMessage(
         content, demoHistory, language,
@@ -1109,6 +1118,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     }
 
     setMessages(prev => [...prev, { id: streamingId, role: 'assistant', content: '' }]);
+    if (workMode) workPanelDismissedRef.current = false;
 
     // Mark this chat as actively processing (sidebar spinner)
     if (currentChatId) markProcessing(currentChatId, true);
@@ -1215,8 +1225,9 @@ const artifactMarker = latestRaw.indexOf('```artifact');
         const tierLabel = model === 'ultra' || model === 'solid' ? 'Ultra' : (model === 'pro' || model === 'liquid' ? 'Pro' : 'Fast');
         let errMsg: string | null = null;
         if (errKey === 'model_sublimit') {
-          const subTier = modelRaw === 'ultra' ? 'Ultra' : modelRaw === 'pro' ? 'Pro' : tierLabel;
-          errMsg = t('ws.err.sublimit', { model: `DZ-${subTier}`, plan: userPlan, time: fmtLeft(secsLeft) });
+          const subName = modelRaw === 'ultra' || modelRaw === 'solid' ? 'Solid 5' : modelRaw === 'pro' || modelRaw === 'liquid' ? 'Liquid 5.1'
+            : modelRaw === 'design' || modelRaw === 'image' ? 'DZ Image' : modelRaw === 'code' ? 'Deiza Code' : 'Gas 4.5';
+          errMsg = t('ws.err.sublimit', { model: subName, plan: userPlan, time: fmtLeft(secsLeft) });
         } else if (errKey === 'usage_limit' || err?.includes('429')) {
           errMsg = t('ws.err.usage', { plan: userPlan, time: fmtLeft(secsLeft) });
           if (userPlan === 'free') {
@@ -1265,7 +1276,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
           m.id === streamingId ? { ...m, images } : m
         ));
       },
-      undefined,  // mode
+      workMode ? 'work' : undefined,  // mode
       undefined,  // agentType
       (sources) => {
         setMessages(prev => prev.map(m =>
@@ -1286,6 +1297,16 @@ const artifactMarker = latestRaw.indexOf('```artifact');
       (handoff) => {
         setMessages(prev => prev.map(m =>
           m.id === streamingId ? { ...m, handoff } : m
+        ));
+      },
+      (ev) => {
+        if (ev?.type === 'shot') {
+          if (ev.img) setWorkShot({ img: ev.img, url: ev.url || '', title: ev.title });
+          if (!isMobile && !workPanelDismissedRef.current) setWorkPanelOpen(true);
+        }
+        if (ev?.type === 'shot' && !ev.url) return;
+        setMessages(prev => prev.map(m =>
+          m.id === streamingId ? { ...m, work: applyWorkEvent(m.work, ev) } : m
         ));
       },
     );
@@ -1430,9 +1451,17 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     setActiveArtifact(null);
     setArtifactHistory([]);
     setArtifactHistoryIndex(-1);
+    setWorkShot(null);
+    setWorkPanelOpen(false);
     if (isMobile) setSidebarOpen(false);
   };
   handleNewChatRef.current = handleNewChat;
+  const switchWorkspaceMode = (next: boolean) => {
+    if (next === workMode) return;
+    haptic('selection');
+    if (messages.length > 0 || currentChatId) handleNewChat();
+    setWorkMode(next);
+  };
 
   // ── Projects ──
   const loadProjects = useCallback(async () => {
@@ -1521,11 +1550,15 @@ const artifactMarker = latestRaw.indexOf('```artifact');
           sources: msg.meta?.sources?.length ? msg.meta.sources : undefined,
           images: msg.meta?.images?.length ? msg.meta.images : undefined,
           handoff: msg.meta?.handoff?.content ? msg.meta.handoff : undefined,
+          work: workFromMeta(msg.meta?.work),
           fromHistory: true,
         };
       });
       scrollIntentRef.current = 'load';
       setMessages(mapped);
+      setWorkMode((response as any).chat?.mode === 'work' || chats.find(c => c.id === chatId)?.mode === 'work');
+      setWorkShot(null);
+      setWorkPanelOpen(false);
       // Mark this chat as seen (clears the red dot)
       const chatRow = chats.find(c => c.id === chatId);
       if (chatRow) markChatSeen(chatId, chatRow.message_count);
@@ -1636,9 +1669,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     if (resetDeadlineRef.current <= 0) return null;
     const diff = resetDeadlineRef.current - performance.now();
     if (diff <= 0) return null;
-    const mins = Math.max(0, Math.ceil(diff / 60000));
-    if (mins <= 0) return null;
-    return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+    return countdownLabel(diff / 1000);
   })();
 
   // One greeting variant per visit (avoids re-rolling on every render)
@@ -1677,7 +1708,9 @@ const artifactMarker = latestRaw.indexOf('```artifact');
    * bottom spacer collapses on the first message and the composer glides down
    * to its dock (framer `layout` animation).
    */
-  const sidePanel = artifactOpen && !isMobile;
+  const workSide = workMode && workPanelOpen && !!currentChatId;
+  const sidePanel = (artifactOpen || workSide) && !isMobile;
+  const workFiles = messages.flatMap(m => m.work?.files || []);  // plain value: hooks cannot live after the early returns above
   const renderThread = (inPanel: boolean) => {
     // Thread text keeps 16 px side margins on phones; the composer card sits 12 px from the edges.
     const padX = inPanel ? 'px-4 sm:px-7' : 'px-4 sm:px-6 lg:px-10';
@@ -1704,7 +1737,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                   transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
                 >
                   <h2 className={`font-display tracking-tight text-foreground leading-tight w-full break-words text-[28px] sm:text-[38px]`}>
-                    {greeting}
+                    {workMode ? t('ws.work.greeting') : greeting}
                   </h2>
                 </motion.div>
               )}
@@ -1743,6 +1776,14 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                   </motion.div>
                 );
               }
+              if (isStreamingMsg && msg.content === '' && !msg.artifact && msg.work) {
+                return (
+                  <div key={msg.id}>
+                    <WorkTrace work={msg.work} live thinking={streamingThinkingSteps[streamingThinkingSteps.length - 1]}
+                      onOpenComputer={workSide ? undefined : () => setWorkPanelOpen(true)} />
+                  </div>
+                );
+              }
               if (isStreamingMsg && msg.content === '' && !msg.artifact) {
                 return (
                   <div key={msg.id}>
@@ -1751,6 +1792,12 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                 );
               }
               return (
+                <Fragment key={msg.id}>
+                {msg.role === 'assistant' && msg.work && (
+                  <WorkTrace work={msg.work} live={isStreamingMsg}
+                    thinking={isStreamingMsg ? streamingThinkingSteps[streamingThinkingSteps.length - 1] : undefined}
+                    onOpenComputer={workMode && !workSide ? () => setWorkPanelOpen(true) : undefined} />
+                )}
                 <ChatMessage
                   key={msg.id}
                   messageId={msg.id}
@@ -1770,6 +1817,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                   stopped={msg.stopped}
                   animateIn={!msg.fromHistory}
                 />
+                </Fragment>
               );
             })}
 
@@ -1869,7 +1917,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
         {/* Empty state: rotating suggestion + spacer that keeps the composer near the centre */}
         {isEmpty && (
           <div className={`min-h-0 shrink flex flex-col items-center pt-3 pb-safe overflow-hidden flex-[1.15_1_0%]`}>
-            <SamplePromptCarousel lang={language} onPick={(p) => setRestoredInput(p)} />
+            <SamplePromptCarousel lang={language} onPick={(p) => setRestoredInput(p)} work={workMode} />
             {isAuthenticated && !isTouchDevice && (
               <div className="hidden md:flex items-center gap-5 mt-7 font-body text-[11px] text-muted-foreground/40 select-none">
                 {[
@@ -2136,8 +2184,23 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                   )}
                   <button onClick={handleLogoClick} className="flex items-center gap-2 hover:opacity-70 transition-opacity focus-ring rounded-lg shrink-0" aria-label={isDemoMode ? t('ws.home') : t('ws.newchat')}>
                     <img src={logo} alt="" className="w-10 h-10 sm:w-12 sm:h-12 blend-multiply" aria-hidden="true" />
-                    <span className="font-display text-[22px] sm:text-[26px] tracking-tight text-foreground">Deiza</span>
+                    <span className={`font-display text-[22px] sm:text-[26px] tracking-tight text-foreground ${isAuthenticated && !isDemoMode ? 'hidden min-[440px]:inline' : ''}`}>Deiza</span>
                   </button>
+                  {isAuthenticated && !isDemoMode && (
+                    <div className="ml-0.5 sm:ml-2 flex items-center p-0.5 rounded-full bg-muted/45 border border-border/25 shrink-0" role="tablist" aria-label={t('ws.mode.label')}>
+                      {([false, true] as const).map(w => (
+                        <button
+                          key={String(w)}
+                          role="tab"
+                          aria-selected={workMode === w}
+                          onClick={() => switchWorkspaceMode(w)}
+                          className={`px-2.5 sm:px-3 py-1 rounded-full font-body text-[12px] leading-4 transition-colors focus-ring ${workMode === w ? 'bg-card text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.25)]' : 'text-muted-foreground hover:text-foreground'}`}
+                        >
+                          {w ? t('ws.mode.work') : t('ws.mode.chat')}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {/* Active project chip */}
                   {activeProjectId && !sidePanel && (() => {
                     const p = projects.find(x => x.id === activeProjectId);
@@ -2188,8 +2251,13 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                     );
                   })()}
                   {!isDemoMode && isAuthenticated && currentChatId && messages.length > 0 && (
-                    <button onClick={handleShareChat} className="p-2 hover:bg-muted rounded-full transition-colors focus-ring" aria-label={t('ws.share.chat')} title={t('ws.share.chat')}>
+                    <button onClick={handleShareChat} className="hidden sm:inline-flex p-2 hover:bg-muted rounded-full transition-colors focus-ring" aria-label={t('ws.share.chat')} title={t('ws.share.chat')}>
                       <Share2 className="w-4 h-4 text-muted-foreground" />
+                    </button>
+                  )}
+                  {workMode && currentChatId && !workSide && (
+                    <button onClick={() => { workPanelDismissedRef.current = false; setWorkPanelOpen(true); }} className="p-2 hover:bg-muted rounded-full transition-colors focus-ring" aria-label={t('ws.work.open_panel')} title={t('ws.work.open_panel')}>
+                      <MonitorPlay className="w-4 h-4 text-muted-foreground" />
                     </button>
                   )}
                   {isAuthenticated && !isDemoMode && (
@@ -2198,7 +2266,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                     </button>
                   )}
                   {isAuthenticated && !isDemoMode && showDesktopDownload && (
-                    <button onClick={() => navigate('/desktop')} className="p-2 hover:bg-muted rounded-full transition-colors focus-ring" aria-label={t('ws.desktop')} title={t('ws.desktop')}>
+                    <button onClick={() => navigate('/desktop')} className="hidden sm:inline-flex p-2 hover:bg-muted rounded-full transition-colors focus-ring" aria-label={t('ws.desktop')} title={t('ws.desktop')}>
                       <MonitorDown className="w-4 h-4 text-muted-foreground" />
                     </button>
                   )}
@@ -2217,6 +2285,10 @@ const artifactMarker = latestRaw.indexOf('```artifact');
 
               {renderThread(sidePanel)}
 
+              {isMobile && workMode && workPanelOpen && !!currentChatId && (
+                <WorkPanel overlay chatId={currentChatId} shot={workShot} onShot={setWorkShot} files={workFiles}
+                  agentBusy={isLoading} onClose={() => { workPanelDismissedRef.current = true; setWorkPanelOpen(false); }} />
+              )}
               {/* Mobile artifact overlay — bottom sheet */}
               {isMobile && (
                 <ArtifactPanel
@@ -2238,6 +2310,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                   <div className="w-0.5 h-12 rounded-full bg-border/40 group-hover:bg-border group-active:bg-primary/40 transition-colors" />
                 </PanelResizeHandle>
                 <Panel id="artifact" order={2} defaultSize={48} minSize={25}>
+                  {artifactOpen ? (
                   <ArtifactPanel
                     open={artifactOpen}
                     onClose={() => setArtifactOpen(false)}
@@ -2248,6 +2321,16 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                     onPrev={handleArtifactPrev}
                     onNext={handleArtifactNext}
                   />
+                  ) : (
+                  <WorkPanel
+                    chatId={currentChatId}
+                    shot={workShot}
+                    onShot={setWorkShot}
+                    files={workFiles}
+                    agentBusy={isLoading}
+                    onClose={() => { workPanelDismissedRef.current = true; setWorkPanelOpen(false); }}
+                  />
+                  )}
                 </Panel>
               </>
             )}

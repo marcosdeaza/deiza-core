@@ -659,7 +659,7 @@ def get_current_user():
         'email': user.email,
         'name': user.name,
         'picture': user.picture,
-        'avatar_url': user.avatar_url,
+        'avatar_url': user.public_avatar_url(),
         'created_at': user.created_at.isoformat(),
         'total_chats': len(user.chats),
         'plan': user.get_plan(),

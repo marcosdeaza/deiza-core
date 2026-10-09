@@ -11,6 +11,7 @@ import CheckoutConsent, { type CheckoutIntent } from '@/components/deiza/Checkou
 import { authHeaders } from '@/services/api';
 import { toast } from 'sonner';
 import { isNative, haptic } from '@/lib/native';
+import { countdownLabel, resetDateLabel, secondsUntil } from '@/lib/usageReset';
 
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
@@ -61,6 +62,8 @@ interface UsageData {
   weekly_remaining?: number;
   weekly_pct?: number;
   weekly_exhausted?: boolean;
+  weekly_reset_at?: string | null;
+  weekly_reset_in_seconds?: number | null;
 }
 
 interface PlanData {
@@ -183,7 +186,9 @@ const Plans = () => {
     }
     return null;
   })();
-  const resetLabel = minsLeft != null ? (minsLeft < 60 ? `${minsLeft}m` : `${Math.floor(minsLeft / 60)}h ${minsLeft % 60}m`) : null;
+  const resetLabel = minsLeft != null ? countdownLabel(minsLeft * 60) : null;
+  const weekIn = countdownLabel(planUsage?.weekly_reset_in_seconds ?? secondsUntil(planUsage?.weekly_reset_at));
+  const weekWhen = resetDateLabel(planUsage?.weekly_reset_at, language, true);
   const blocked = !!planUsage?.exhausted;
   const fmt = new Intl.NumberFormat(es ? 'es-ES' : 'en-US');
 
@@ -277,12 +282,18 @@ const Plans = () => {
                 </div>
                 <div className="h-1.5 w-full rounded-full bg-muted/60 overflow-hidden">
                   <motion.div
-                    className="h-full rounded-full bg-emerald-500"
+                    className={`h-full rounded-full ${planUsage.weekly_exhausted ? 'bg-red-400' : 'bg-emerald-500'}`}
                     initial={{ width: 0 }}
                     animate={{ width: `${Math.min(100, Math.max(0, planUsage.weekly_pct || 0))}%` }}
                     transition={{ type: 'spring', stiffness: 90, damping: 20, delay: 0.3 }}
                   />
                 </div>
+                {weekIn && weekWhen && (
+                  <p className="mt-2 flex items-center gap-1.5 font-body text-[12px] text-foreground/75">
+                    <Clock className="w-3.5 h-3.5 text-muted-foreground/70 shrink-0" aria-hidden="true" />
+                    <span>{t('pl.usage.weekly_reset', { when: weekWhen, in: weekIn })}</span>
+                  </p>
+                )}
                 <p className="text-[11px] text-muted-foreground/60 mt-1.5">
                   {t('pl.usage.weekly_desc') || 'Capacidad semanal ultra-amplia para sesiones intensivas de programación sin interrupciones.'}
                 </p>
@@ -423,15 +434,15 @@ const Plans = () => {
               </thead>
               <tbody>
                 {([
-                  [t('pl.cmp.models'), 'Gas 4.5 · Liquid 5.1', 'Gas · Liquid · Solid 5', 'Todos + Solid 5 Ilimitado'],
-                  [t('pl.cmp.tokens'), '300k', '3M', '8M'],
-                  [t('pl.cmp.weekly'), '1.5M', '24M', '80M'],
+                  [t('pl.cmp.models'), 'Gas 4.5 · Liquid 5.1', 'Gas · Liquid · Solid 5', 'Gas · Liquid · Solid 5'],
+                  [t('pl.cmp.tokens'), '300k', '4M', '8M'],
+                  [t('pl.cmp.weekly'), '2.5M', '35M', '85M'],
                   [t('pl.cmp.grace'), '✓', '✓', '✓'],
-                  [t('pl.cmp.solid'), '—', '✓ Completo', '✓ Ilimitado'],
+                  [t('pl.cmp.solid'), '—', '✓', '✓'],
                   [t('pl.cmp.images'), '~3', '~20', '~60'],
                   [t('pl.cmp.editing'), '—', '✓', '✓'],
                   [t('pl.cmp.api'), '—', '✓', '✓'],
-                  [t('pl.cmp.projects'), '1 · 5', '5 · 20', '25 · 50'],
+                  [t('pl.cmp.projects'), '1 · 5', '10 · 30', '50 · 100'],
                   [t('pl.cmp.search'), '✓', '✓', '✓'],
                   [t('pl.cmp.early'), '—', '—', '✓'],
                 ] as string[][]).map(([label, ...cells]) => (

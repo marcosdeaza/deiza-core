@@ -31,7 +31,7 @@ interface ChatInputProps {
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const ALLOWED_TYPES = '.pdf,.txt,.md,.py,.js,.jsx,.ts,.tsx,.css,.html,.json,.png,.jpg,.jpeg,.gif,.webp,.heic';
+const ALLOWED_TYPES = '.pdf,.txt,.md,.py,.js,.jsx,.ts,.tsx,.css,.html,.json,.yaml,.yml,.toml,.sql,.sh,.bash,.zsh,.ps1,.bat,.cmd,.env,.c,.cpp,.h,.hpp,.rs,.go,.java,.php,.rb,.swift,.kt,.lua,.csv,.xml,.svg,.zip,.tar,.gz,.tgz,.png,.jpg,.jpeg,.gif,.webp,.heic';
 
 const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
@@ -294,12 +294,63 @@ const ChatInput = ({
     dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
     if (dragDepthRef.current === 0) setIsDragging(false);
   };
-  const onDrop = (e: React.DragEvent) => {
+  const onDrop = async (e: React.DragEvent) => {
     if (!isDragging) return;
     e.preventDefault();
     dragDepthRef.current = 0;
     setIsDragging(false);
-    Array.from(e.dataTransfer.files || []).slice(0, 6).forEach(processFile);
+
+    const collectedFiles: File[] = [];
+    const items = e.dataTransfer.items;
+
+    if (items && items.length > 0) {
+      const traverseEntry = async (entry: any, maxCount: number = 20): Promise<void> => {
+        if (!entry || collectedFiles.length >= maxCount) return;
+        if (entry.isFile) {
+          await new Promise<void>((resolve) => {
+            entry.file((file: File) => {
+              if (!file.name.startsWith('.') && file.size < MAX_FILE_SIZE) {
+                collectedFiles.push(file);
+              }
+              resolve();
+            }, () => resolve());
+          });
+        } else if (entry.isDirectory) {
+          if (['node_modules', '.git', '.next', 'dist', 'build', '__pycache__'].includes(entry.name)) {
+            return;
+          }
+          const dirReader = entry.createReader();
+          const entries: any[] = await new Promise((resolve) => {
+            dirReader.readEntries((results: any[]) => resolve(results || []), () => resolve([]));
+          });
+          for (const child of entries) {
+            if (collectedFiles.length >= maxCount) break;
+            await traverseEntry(child, maxCount);
+          }
+        }
+      };
+
+      for (let i = 0; i < items.length && collectedFiles.length < 20; i++) {
+        const item = items[i];
+        if (item.kind === 'file') {
+          const entry = (item as any).webkitGetAsEntry ? (item as any).webkitGetAsEntry() : null;
+          if (entry) {
+            await traverseEntry(entry, 20);
+          } else {
+            const f = item.getAsFile();
+            if (f) collectedFiles.push(f);
+          }
+        }
+      }
+    }
+
+    if (collectedFiles.length === 0 && e.dataTransfer.files?.length) {
+      collectedFiles.push(...Array.from(e.dataTransfer.files));
+    }
+
+    for (const file of collectedFiles.slice(0, 8)) {
+      await processFile(file);
+    }
   };
 
   const removeFile = (index: number) => {

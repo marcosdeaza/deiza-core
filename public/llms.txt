@@ -1,0 +1,25 @@
+# Deiza API
+
+> OpenAI-compatible Chat Completions API for the Deiza models: Liquid 5.1 (default, 262k context), Solid 5 (deep reasoning, 1M context) and Gas 4.5 (fastest, text only). Base URL https://deiza.org/api/v1, auth `Authorization: Bearer dz_...`. Usage is charged to the key owner's Deiza plan (Friend or Signet; the Free plan has no API access).
+
+Use any OpenAI SDK with `base_url="https://deiza.org/api/v1"` and a Deiza key (create it at https://deiza.org/api-keys). Model ids: `deiza-liquid-5.1`, `deiza-solid-5`, `deiza-gas-4.5`. Errors follow the OpenAI error format (`error.message`, `error.type`, `error.code`). Supported: streaming (SSE), vision (`image_url`, Liquid and Solid), function calling (`tools`, `tool_choice`), `reasoning_effort` (low/medium/high), `max_tokens` up to 32768.
+
+## Docs
+
+- [Full documentation in Markdown](https://deiza.org/llms-full.txt): everything in one file (English).
+- [Documentation, English](https://deiza.org/docs/en/): HTML.
+- [Documentación, español](https://deiza.org/docs/): HTML. Markdown: https://deiza.org/docs/api.es.md
+- [OpenAPI 3.1 specification](https://deiza.org/openapi.json)
+- [API self-description](https://deiza.org/api/v1): JSON.
+
+## Endpoints
+
+- `POST https://deiza.org/api/v1/chat/completions`: chat completion, JSON or Server-Sent Events.
+- `GET https://deiza.org/api/v1/models`: models with context window and capabilities (public).
+- `GET https://deiza.org/api/v1/usage`: live usage of the 5-hour window and the weekly period.
+- `POST https://deiza.org/api/v1/search`: web search with sources (`type: web`) or verified photos (`type: images`).
+
+## Optional
+
+- [Plans and limits](https://deiza.org/plans): the API needs Friend (4M usage per 5-hour window, 35M per week) or Signet (8M, 85M per week); Free gets 403 plan_required.
+- [Deiza Code CLI](https://deiza.org/download): terminal coding agent on top of this API.

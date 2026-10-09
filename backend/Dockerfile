@@ -1,13 +1,13 @@
 # Dockerfile for Deiza Backend (Flask + Gunicorn)
 
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim@sha256:6f31d6e9ba2b0a787a3f81c37b004155b87b9efa1b771182bd550c1615745be5 AS builder
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+COPY requirements.txt requirements.lock ./
+RUN pip install --no-cache-dir --user -r requirements.txt -c requirements.lock
 
 # ---- Runtime stage ----
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:6f31d6e9ba2b0a787a3f81c37b004155b87b9efa1b771182bd550c1615745be5
 
 # Install locales, ffmpeg (video editing: concat clips, burn subtitles) and generate Spanish UTF-8
 RUN apt-get update -qq && apt-get install -y -qq locales ffmpeg fontconfig fonts-dejavu-core \
@@ -49,6 +49,9 @@ ENV PATH=/home/deiza/.local/bin:$PATH
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen(\"http://localhost:${PORT}/api/health\")" || exit 1
 
+# Fail the build on continuity, tool-pairing or stream-integrity regressions.
+RUN DEIZA_TEST_SOURCE=/app python tests/test_quality_regressions.py
+
 # 3 workers x 24 threads = 72 concurrent connections (streams are I/O bound and
 # hold a thread for their whole duration). VPS: 4 vCPU / 8 GB, ~250 MB per worker.
 # gthread handles SSE streaming better than sync workers.
@@ -57,10 +60,10 @@ CMD exec gunicorn \
   --workers 3 \
   --threads 24 \
   --timeout 600 \
-  --graceful-timeout 120 \
+  --graceful-timeout 900 \
   --keep-alive 5 \
   --worker-class gthread \
-  --max-requests 5000 \
+  --max-requests 20000 \
   --max-requests-jitter 500 \
   --worker-tmp-dir /dev/shm \
   --log-level info \

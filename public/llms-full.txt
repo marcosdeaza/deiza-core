@@ -1,0 +1,327 @@
+# Deiza API
+
+The Deiza API gives your code the same models that answer in deiza.org: **Liquid 5.1**, **Solid 5** and **Gas 4.5**. It speaks the **OpenAI Chat Completions** format, so any OpenAI SDK or compatible tool works by changing the base URL and the key.
+
+| | |
+|---|---|
+| Base URL | `https://deiza.org/api/v1` |
+| Auth | `Authorization: Bearer dz_...` |
+| Format | OpenAI Chat Completions (JSON, Server-Sent Events for streaming) |
+| Billing | Your Deiza plan (Friend or Signet). No separate card, no per-request invoice |
+| Machine-readable | [llms.txt](https://deiza.org/llms.txt) · [llms-full.txt](https://deiza.org/llms-full.txt) · [openapi.json](https://deiza.org/openapi.json) · [this page as Markdown](https://deiza.org/docs/api.md) |
+
+This documentation is public: no login, no JavaScript needed, free to read, quote, crawl and feed to any AI.
+
+## Quickstart
+
+1. Create a key at [deiza.org/api-keys](https://deiza.org/api-keys). It is shown once; store it in an environment variable.
+2. Send a request:
+
+```bash
+export DEIZA_API_KEY="dz_..."
+
+curl https://deiza.org/api/v1/chat/completions \
+  -H "Authorization: Bearer $DEIZA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deiza-liquid-5.1",
+    "messages": [
+      {"role": "system", "content": "Answer briefly."},
+      {"role": "user", "content": "What is a transformer? Three sentences."}
+    ]
+  }'
+```
+
+With the official OpenAI SDK for Python (`pip install openai`):
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(base_url="https://deiza.org/api/v1", api_key=os.environ["DEIZA_API_KEY"])
+
+resp = client.chat.completions.create(
+    model="deiza-liquid-5.1",
+    messages=[{"role": "user", "content": "Summarise relativity in five lines."}],
+)
+print(resp.choices[0].message.content)
+```
+
+With the OpenAI SDK for Node.js (`npm install openai`):
+
+```javascript
+import OpenAI from "openai";
+
+const client = new OpenAI({ baseURL: "https://deiza.org/api/v1", apiKey: process.env.DEIZA_API_KEY });
+
+const stream = await client.chat.completions.create({
+  model: "deiza-liquid-5.1",
+  stream: true,
+  messages: [{ role: "user", content: "Three name ideas for a café." }],
+});
+for await (const chunk of stream) process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
+```
+
+## Authentication
+
+Every request needs an API key. Send it in either header:
+
+```http
+Authorization: Bearer dz_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+X-Api-Key: dz_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+- Keys start with `dz_` and belong to your account: requests spend your plan's usage.
+- Manage them at [deiza.org/api-keys](https://deiza.org/api-keys): name, optional expiry (7, 30, 90 or 365 days), last use, request count, rename and revoke.
+- The full key is shown only once. Deiza stores a hash, never the key.
+- A revoked or expired key gets `401` immediately.
+- Never put a key in front-end code or a public repository. Call the API from your server.
+
+## Models
+
+| Model | Context window | Max output | Vision | Tools | Best for |
+|---|---|---|---|---|---|
+| `deiza-liquid-5.1` (default) | 262,144 | 32,768 | yes | yes | Balanced and agentic: code, tools, everyday work |
+| `deiza-solid-5` | 1,048,576 | 32,768 | yes | yes | Deep reasoning, long documents, architecture, hard debugging |
+| `deiza-gas-4.5` | 131,072 | 32,768 | no | yes | Fastest and cheapest: short tasks, classification, quick answers |
+
+Aliases keep working: `deiza-liquid`, `liquid`, `deiza-omniscient` → Liquid 5.1; `deiza-solid`, `solid` → Solid 5; `deiza-gas`, `gas` → Gas 4.5. An unknown model returns `404 model_not_found`.
+
+`GET /models` lists them (public, no key needed):
+
+```bash
+curl https://deiza.org/api/v1/models
+```
+
+```json
+{
+  "data": [
+    {
+      "id": "deiza-liquid-5.1", "object": "model", "owned_by": "deizalab",
+      "name": "Deiza Liquid 5.1", "default": true,
+      "context_window": 262144, "max_output_tokens": 32768,
+      "vision": true, "tools": true, "reasoning_effort": true,
+      "aliases": ["deiza-liquid", "liquid", "deiza-omniscient"]
+    }
+  ]
+}
+```
+
+## Chat completions
+
+`POST /chat/completions`
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `messages` | array | Required. Roles `system`, `user`, `assistant`, `tool`. `content` is a string or a list of parts (`text`, `image_url`) |
+| `model` | string | Optional, defaults to `deiza-liquid-5.1` |
+| `stream` | boolean | `true` for Server-Sent Events |
+| `max_tokens` | integer | Default 16,384, maximum 32,768 |
+| `temperature` | number | 0 to 1.5, default 0.2 |
+| `reasoning_effort` | string | `low`, `medium` or `high`. Solid thinks `high` by default; Gas always thinks briefly |
+| `tools` | array | Function tools in the OpenAI format, up to 64 |
+| `tool_choice` | string or object | `auto`, `none`, `required` or `{"type": "function", "function": {"name": "..."}}` |
+| `parallel_tool_calls` | boolean | Allow several tool calls in one turn |
+
+Other OpenAI parameters (`n`, `top_p`, `seed`, `response_format`, `logprobs`, ...) are accepted and ignored.
+
+Response:
+
+```json
+{
+  "id": "chatcmpl-360bbd1c-87aa-4bf2-9190-da6a414c48a8",
+  "object": "chat.completion",
+  "created": 1791074949,
+  "model": "deiza-liquid-5.1",
+  "choices": [
+    { "index": 0, "message": { "role": "assistant", "content": "..." }, "finish_reason": "stop" }
+  ],
+  "usage": { "prompt_tokens": 71, "completion_tokens": 35, "total_tokens": 106 },
+  "deiza_usage_state": "ok"
+}
+```
+
+`deiza_usage_state` is `ok`, or `grace` when your plan ran out during work and Deiza is finishing with the courtesy margin (see [Usage and limits](#usage-and-limits)).
+
+### Streaming
+
+With `"stream": true` the answer arrives as Server-Sent Events, one `data:` line per chunk, ending with `data: [DONE]`:
+
+```text
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","model":"deiza-gas-4.5","choices":[{"index":0,"delta":{"role":"assistant","content":"Hel"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","model":"deiza-gas-4.5","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":"stop"}]}
+
+: deiza-usage {"state": "ok", "pct": 0.4, "weekly_pct": 0.1}
+
+data: [DONE]
+```
+
+Lines that start with `:` are SSE comments (keep-alive pings and a final usage summary). Standard SSE clients and the OpenAI SDKs ignore them. Reasoning models may send `delta.reasoning` before the visible text.
+
+### Vision
+
+Liquid 5.1 and Solid 5 read images. Send them as `image_url` parts, with an `https://` URL or a `data:` URL:
+
+```json
+{
+  "model": "deiza-liquid-5.1",
+  "messages": [{
+    "role": "user",
+    "content": [
+      { "type": "text", "text": "What is in this picture?" },
+      { "type": "image_url", "image_url": { "url": "https://example.com/photo.jpg" } }
+    ]
+  }]
+}
+```
+
+### Tool calling
+
+Function calling works as in OpenAI: declare `tools`, the model answers with `tool_calls`, you run the function and send the result back as a `tool` message.
+
+```python
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Current weather in a city",
+        "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
+    },
+}]
+
+first = client.chat.completions.create(model="deiza-liquid-5.1", tools=tools,
+    messages=[{"role": "user", "content": "Weather in Valencia?"}])
+call = first.choices[0].message.tool_calls[0]
+
+second = client.chat.completions.create(model="deiza-liquid-5.1", tools=tools, messages=[
+    {"role": "user", "content": "Weather in Valencia?"},
+    first.choices[0].message,
+    {"role": "tool", "tool_call_id": call.id, "content": '{"temp_c": 24, "sky": "clear"}'},
+])
+print(second.choices[0].message.content)
+```
+
+## Web search
+
+`POST /search` gives your agents the same search Deiza uses: web answers with sources, or verified photos.
+
+| Field | Type | Notes |
+|---|---|---|
+| `query` | string | Required, up to 300 characters |
+| `type` | string | `web` or `images` (default `images`) |
+| `num` | integer | 1 to 12, default 6 |
+| `language` | string | ISO code, default `es` |
+
+```bash
+curl https://deiza.org/api/v1/search \
+  -H "Authorization: Bearer $DEIZA_API_KEY" -H "Content-Type: application/json" \
+  -d '{"query": "eiffel tower", "type": "images", "num": 4}'
+```
+
+```json
+{
+  "type": "images",
+  "query": "eiffel tower",
+  "results": [
+    { "url": "https://.../La-Torre-Eiffel.jpg", "title": "...", "source": "https://..." }
+  ]
+}
+```
+
+With `"type": "web"` the response also has `answer`, a short summary, and `results` with `title` and `url` of each source. Limit: 40 searches per minute per account.
+
+## Usage and limits
+
+The API is included in the **Friend** and **Signet** plans (the Free plan gets `403 plan_required`). It spends the same usage as the chat and Deiza Code:
+
+| Plan | Per 5-hour window | Per week |
+|---|---|---|
+| Friend | 4M | 35M |
+| Signet | 8M | 85M |
+
+- **5-hour window.** It opens with your first request and resets to zero 5 hours later.
+- **Week.** A fixed 7-day period that resets in full, always on the same day and hour (shown in [Plans](https://deiza.org/plans) and in `GET /usage`).
+- **Usage units.** Each request is measured by what it really costs: fresh input ×1, cached input ×0.1, re-read context ×0.25, output and reasoning ×5. Then a model multiplier applies:
+
+| Model | Friend | Signet |
+|---|---|---|
+| Gas 4.5 | ×0.35 | ×0.35 |
+| Liquid 5.1 | ×1 | ×1 |
+| Solid 5 | ×2 | ×1.8 |
+
+- **Courtesy margin.** If the limit runs out while you are working (a request in the last 15 minutes), up to 12% more of the window is served so work in progress is not cut. `deiza_usage_state` and the `X-Deiza-Usage-State` header say `grace` meanwhile.
+
+`GET /usage` returns the live state:
+
+```json
+{
+  "plan": "friend",
+  "tokens_used": 1240800, "token_limit": 4000000, "tokens_remaining": 2759200,
+  "pct": 31.0, "state": "ok", "limit_scope": "window",
+  "next_reset": "2026-10-04T05:26:55Z", "reset_in_seconds": 15320,
+  "weekly_used": 9800000, "weekly_limit": 35000000, "weekly_pct": 28.0,
+  "weekly_reset_at": "2026-10-10T16:00:00Z", "weekly_reset_in_seconds": 486000,
+  "exhausted": false
+}
+```
+
+## Errors
+
+Errors use the OpenAI format, so SDKs raise the right exception:
+
+```json
+{
+  "error": {
+    "message": "The model 'gpt-9' does not exist. Use one of: deiza-liquid-5.1, deiza-solid-5, deiza-gas-4.5 (GET https://deiza.org/api/v1/models).",
+    "type": "not_found_error",
+    "code": "model_not_found",
+    "param": "model"
+  }
+}
+```
+
+| Status | `code` | Meaning |
+|---|---|---|
+| 400 | `invalid_request` | Malformed body (for example, no `messages`) |
+| 401 | `missing_api_key`, `invalid_api_key` | No key, or a wrong, revoked or expired one |
+| 403 | `plan_required` | Your plan does not include the API (Free) or that model |
+| 404 | `model_not_found` | Unknown model id |
+| 429 | `usage_limit` | The 5-hour window or the week ran out. `Retry-After` says when it resets |
+| 429 | `model_sublimit` | That model's own limit in the current window |
+| 5xx | `api_error`, `overloaded_error` | Temporary problem. Retry with exponential backoff (1 s, 2 s, 4 s...) |
+
+During a stream, an error arrives as a `data:` line with an `error` object.
+
+## Compatible tools
+
+Anything that accepts an OpenAI-compatible endpoint works: the OpenAI SDKs, LangChain, LlamaIndex, Vercel AI SDK, Cursor, Continue, Cline, Aider, Open WebUI, LibreChat, n8n...
+
+```bash
+OPENAI_BASE_URL=https://deiza.org/api/v1
+OPENAI_API_KEY=dz_...
+OPENAI_MODEL=deiza-liquid-5.1
+```
+
+The previous base URL `https://deiza.org/api/code` keeps working with the same paths.
+
+## For AIs and crawlers
+
+Everything here is public and stable, so assistants, agents and crawlers can read it without a login:
+
+- [`/llms.txt`](https://deiza.org/llms.txt): short index of the API for language models.
+- [`/llms-full.txt`](https://deiza.org/llms-full.txt): this whole documentation as plain Markdown.
+- [`/openapi.json`](https://deiza.org/openapi.json): OpenAPI 3.1 specification of every endpoint.
+- [`/docs/api.md`](https://deiza.org/docs/api.md) and [`/docs/api.es.md`](https://deiza.org/docs/api.es.md): this page in Markdown (English and Spanish).
+- `GET https://deiza.org/api/v1`: the API describes itself in JSON.
+
+All of them allow cross-origin requests (`Access-Control-Allow-Origin: *`).
+
+## Changelog
+
+- **2026-10-04 (later).** Weekly caps: Friend 35M, Signet 85M. The API and Deiza Code are for paid plans (Free gets `403 plan_required`).
+- **2026-10-04.** Versioned base URL `/api/v1`. Errors in the OpenAI format. `404 model_not_found` for unknown models. `GET /models` public with context windows and capabilities. `GET /usage` with the weekly reset date. Public, crawlable documentation with llms.txt and OpenAPI. Key console with expiry, request count and rename.

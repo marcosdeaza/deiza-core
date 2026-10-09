@@ -20,7 +20,7 @@ import redis
 # the model endpoint config for Gas 4.5 & Liquid
 CODE_API_URL = os.getenv("CODE_API_URL", "")
 CODE_API_KEY = os.getenv("CODE_API_KEY", "")
-CODE_MODEL_GAS = os.getenv("CODE_MODEL_GAS", "")
+CODE_MODEL_GAS = os.getenv("CODE_MODEL_GAS", "openai.the fast model")
 CODE_MODEL_LIQUID = os.getenv("CODE_MODEL_LIQUID", "")
 
 def _get_redis():
@@ -60,7 +60,7 @@ def _set_cached_search(query: str, custom_urls: list, language: str, result: dic
         logger.debug(f"Redis cache set failed: {e}")
 
 def _call_code_gas(messages, system=None, max_tokens=1500, temperature=0.2, timeout=18):
-    """Call Gas 4.5 on the model endpoint. Ultra-fast, deep reasoning."""
+    """Call Gas 4.5 (openai.the fast model) on the model endpoint. Ultra-fast, deep reasoning."""
     if not CODE_API_KEY:
         return ""
     payload_msgs = []
@@ -553,7 +553,7 @@ def _grounding_search(query, custom_urls, language, history=None, use_web=True, 
             s["is_indexed"] = True
         dedup = custom_srcs + other_srcs
 
-    # Gas 4.5 synthesis: ultra-fast, high IQ
+    # Gas 4.5 (openai.the fast model) synthesis: ultra-fast, high IQ
     overview = ""
     sources_summary = "\n".join([f"- {s.get('title', '')} ({s.get('url', '')})" for s in dedup[:6]])
     gas_prompt = f"Consulta: {query}\n\nFuentes web verificadas:\n{sources_summary}\n\nInformación preliminar:\n{model_overview[:1500]}"

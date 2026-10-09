@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage, LANGUAGES } from '@/contexts/LanguageContext';
 import {
   ArrowLeft, Brain, MessageSquare,
-  ChevronRight, LogOut, Globe, Sparkles, Shield, Info, Trash2, Sun, Moon, Check, KeyRound, Plus, Copy, X,
+  ChevronRight, LogOut, Globe, Sparkles, Shield, Info, Trash2, Sun, Moon, Check, KeyRound,
   Link2, Newspaper, BookOpen, Camera, User as UserIcon,
 } from 'lucide-react';
 import SkillsPanel from '@/components/deiza/SkillsPanel';
@@ -14,7 +14,9 @@ import AmbientRose from '@/components/deiza/AmbientRose';
 import logo from '@/assets/logo.png';
 import { api, CodeKey, authHeaders } from '@/services/api';
 import { LEGAL_DOCS } from '@/data/legal';
-import { Download, FileText } from 'lucide-react';
+import { Download, FileText, Mic } from 'lucide-react';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem } from '@/components/ui/dropdown-menu';
+import { readInput, readInputName, writeInput, cleanMicName, listInputs } from '@/lib/micInput';
 import { toast } from 'sonner';
 import { haptic, isNative } from '@/lib/native';
 import { isDesktopApp, desktopBridge } from '@/lib/desktop';
@@ -55,6 +57,49 @@ const Row = ({
     {right}
   </button>
 );
+
+const MicSetting = () => {
+  const { t } = useLanguage();
+  const [id, setId] = React.useState(() => readInput());
+  const [name, setName] = React.useState(() => readInputName());
+  const [inputs, setInputs] = React.useState<MediaDeviceInfo[]>([]);
+  const [open, setOpen] = React.useState(false);
+  React.useEffect(() => {
+    const sync = () => { setId(readInput()); setName(readInputName()); };
+    window.addEventListener('deiza:audio-input', sync);
+    return () => window.removeEventListener('deiza:audio-input', sync);
+  }, []);
+  const onOpen = (o: boolean) => { setOpen(o); if (o) void listInputs().then(setInputs).catch(() => setInputs([])); };
+  const choose = (v: string) => {
+    const label = v === 'default' ? '' : (inputs.find(d => d.deviceId === v)?.label || '');
+    writeInput(v, label); setId(v); setName(label ? cleanMicName(label) : '');
+  };
+  return (
+    <DropdownMenu open={open} onOpenChange={onOpen}>
+      <DropdownMenuTrigger asChild>
+        <div>
+          <Row
+            icon={<Mic className="w-5 h-5 text-rose-400" />}
+            iconBg="bg-rose-500/15"
+            label={t('aud.input.title')}
+            sublabel={name || t('aud.input.default')}
+            right={<ChevronRight className="w-4 h-4 text-muted-foreground/40 shrink-0" />}
+          />
+        </div>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[240px] max-w-[340px]">
+        <DropdownMenuRadioGroup value={id} onValueChange={choose}>
+          <DropdownMenuRadioItem value="default" className="text-[13px]">{t('aud.input.default')}</DropdownMenuRadioItem>
+          {inputs.map((d, i) => (
+            <DropdownMenuRadioItem key={d.deviceId} value={d.deviceId} className="text-[13px]">
+              <span className="truncate">{d.label ? cleanMicName(d.label) : t('aud.input.mic', { n: i + 1 })}</span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+};
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <motion.section
@@ -189,11 +234,6 @@ const Settings = () => {
   const [saved, setSaved] = useState(false);
   const [keys, setKeys] = useState<CodeKey[]>([]);
   const [keysLoading, setKeysLoading] = useState(true);
-  const [newKeyName, setNewKeyName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [rawKey, setRawKey] = useState<string | null>(null);
-  const [copiedKey, setCopiedKey] = useState(false);
-  const [keysError, setKeysError] = useState(false);
 
   useEffect(() => {
     void syncMemoryFromServer().then(({ enabled, items }) => {
@@ -205,34 +245,9 @@ const Settings = () => {
   useEffect(() => {
     api.getCodeKeys()
       .then(({ keys }) => setKeys(keys))
-      .catch(() => setKeysError(true))
+      .catch(() => { /* the row just shows its description */ })
       .finally(() => setKeysLoading(false));
   }, []);
-
-  const createKey = async () => {
-    setCreating(true);
-    try {
-      const { raw_key } = await api.createCodeKey(newKeyName.trim() || 'mi-clave');
-      const { keys: updated } = await api.getCodeKeys();
-      setKeys(updated);
-      setNewKeyName('');
-      setRawKey(raw_key);
-      setCopiedKey(false);
-    } catch {
-      setKeysError(true);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const revokeKey = async (id: number) => {
-    try {
-      await api.revokeCodeKey(id);
-      setKeys(k => k.filter(x => x.id !== id));
-    } catch {
-      setKeysError(true);
-    }
-  };
 
   const toggleMemory = () => {
     const next = !memoryMode;
@@ -477,6 +492,9 @@ const Settings = () => {
                 </div>
               </div>
 
+              {/* Dictation microphone */}
+              <MicSetting />
+
               {/* Chain fallback */}
               <Row
                 onClick={toggleChainFallback}
@@ -567,129 +585,17 @@ const Settings = () => {
               />
             </Section>
 
-            {/* API Keys */}
+            {/* API: keys live in their own console (/api-keys) */}
             <Section title={t('st.keys')}>
-              <div
-                className="p-4 rounded-2xl bg-card/60"
-                style={{ border: '0.5px solid hsl(var(--border) / 0.25)' }}
-              >
-                <div className="flex items-start gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-2xl bg-amber-500/15 flex items-center justify-center shrink-0">
-                    <KeyRound className="w-5 h-5 text-amber-400" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-body text-sm font-medium text-foreground">{t('st.keys')}</p>
-                    <p className="font-body text-xs text-muted-foreground mt-0.5">{t('st.keys.desc')}</p>
-                  </div>
-                </div>
-
-                {keysError && !keysLoading && (
-                  <p className="font-body text-xs text-destructive mb-2">{t('st.keys.err')}</p>
-                )}
-
-                {!keysLoading && keys.length > 0 && (
-                  <div className="space-y-2 mb-3">
-                    {keys.map(k => (
-                      <div key={k.id} className="flex items-center justify-between py-2 px-3 rounded-xl bg-muted/30">
-                        <div className="min-w-0">
-                          <p className="font-body text-xs font-medium text-foreground truncate">{k.name}</p>
-                          <p className="font-body text-[11px] text-muted-foreground/60">
-                            {k.key_prefix} · {k.last_used_at
-                              ? new Date(k.last_used_at).toLocaleDateString()
-                              : t('st.keys.never')}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => revokeKey(k.id)}
-                          className="shrink-0 p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground/50 hover:text-destructive transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {!keysLoading && keys.length === 0 && !keysError && (
-                  <p className="font-body text-xs text-muted-foreground/60 mb-3">{t('st.keys.empty')}</p>
-                )}
-
-                <div className="flex gap-2">
-                  <input
-                    value={newKeyName}
-                    onChange={e => setNewKeyName(e.target.value)}
-                    placeholder={t('st.keys.name.ph')}
-                    className="flex-1 bg-muted/30 rounded-xl px-3 py-2 text-sm font-body text-foreground placeholder:text-muted-foreground/40 outline-none border border-border/30 focus:border-primary/50 transition-colors"
-                    onKeyDown={e => { if (e.key === 'Enter') createKey(); }}
-                    style={{ fontSize: '16px' }}
-                  />
-                  <button
-                    onClick={createKey}
-                    disabled={creating}
-                    className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-body font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-all disabled:opacity-50"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    {t('st.keys.create')}
-                  </button>
-                </div>
-              </div>
+              <Row
+                onClick={() => navigate('/api-keys')}
+                icon={<KeyRound className="w-5 h-5 text-amber-400" />}
+                iconBg="bg-amber-500/15"
+                label={t('ak.title')}
+                sublabel={keysLoading ? t('st.keys.desc') : t('ak.settings.sub', { n: keys.length })}
+                right={<ChevronRight className="w-4 h-4 text-muted-foreground/40 shrink-0" />}
+              />
             </Section>
-
-            {/* Raw key modal */}
-            <AnimatePresence>
-              {rawKey && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-                  onClick={() => setRawKey(null)}
-                >
-                  <motion.div
-                    initial={{ scale: 0.95, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.95, opacity: 0 }}
-                    className="w-full max-w-md rounded-3xl bg-card p-6 shadow-xl"
-                    style={{ border: '0.5px solid hsl(var(--border) / 0.25)' }}
-                    onClick={e => e.stopPropagation()}
-                  >
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 rounded-2xl bg-amber-500/15 flex items-center justify-center shrink-0">
-                        <KeyRound className="w-5 h-5 text-amber-400" />
-                      </div>
-                      <div className="flex-1">
-                        <p className="font-body text-sm font-semibold text-foreground">{t('st.keys.raw.title')}</p>
-                        <p className="font-body text-xs text-muted-foreground mt-0.5">{t('st.keys.raw.desc')}</p>
-                      </div>
-                      <button
-                        onClick={() => setRawKey(null)}
-                        className="shrink-0 p-1.5 rounded-full hover:bg-muted/70 transition-colors"
-                      >
-                        <X className="w-4 h-4 text-muted-foreground/60" />
-                      </button>
-                    </div>
-                    <div className="relative mb-4">
-                      <code className="block w-full bg-muted/40 rounded-xl p-3 text-xs font-mono text-foreground break-all select-all border border-border/30">
-                        {rawKey}
-                      </code>
-                      <button
-                        onClick={() => { navigator.clipboard.writeText(rawKey); setCopiedKey(true); }}
-                        className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-body font-medium bg-muted/60 hover:bg-muted/90 transition-colors text-muted-foreground"
-                      >
-                        {copiedKey ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
-                        {copiedKey ? t('st.keys.copied') : t('st.keys.copy')}
-                      </button>
-                    </div>
-                    <button
-                      onClick={() => setRawKey(null)}
-                      className="w-full py-2.5 rounded-xl text-sm font-body font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
-                    >
-                      {t('st.keys.done')}
-                    </button>
-                  </motion.div>
-                </motion.div>
-              )}
-            </AnimatePresence>
 
             {/* Your data: RGPD self-service */}
             <div id="datos" className="scroll-mt-20" />

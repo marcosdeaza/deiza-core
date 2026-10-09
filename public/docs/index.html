@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API de Deiza · Documentación</title>
+<meta name="description" content="Documentación pública de la API de Deiza: compatible con OpenAI Chat Completions, modelos Liquid 5.1, Solid 5 y Gas 4.5, autenticación, streaming, visión, herramientas, búsqueda web, límites y errores.">
+<meta name="robots" content="index, follow, max-snippet:-1">
+<link rel="canonical" href="https://deiza.org/docs/">
+<link rel="alternate" hreflang="es" href="https://deiza.org/docs/">
+<link rel="alternate" hreflang="en" href="https://deiza.org/docs/en/">
+<link rel="alternate" type="text/markdown" href="/docs/api.es.md" title="Markdown">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt">
+<link rel="service-desc" type="application/json" href="/openapi.json">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="article">
+<meta property="og:title" content="API de Deiza · Documentación">
+<meta property="og:description" content="Documentación pública de la API de Deiza: compatible con OpenAI Chat Completions, modelos Liquid 5.1, Solid 5 y Gas 4.5, autenticación, streaming, visión, herramientas, búsqueda web, límites y errores.">
+<meta property="og:url" content="https://deiza.org/docs/">
+<meta name="theme-color" content="#1c1917" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ece8e2" media="(prefers-color-scheme: light)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:hsl(35 20% 91%);--fg:hsl(18 8% 15%);--card:hsl(40 25% 96%);--muted:hsl(35 18% 86%);--muted-fg:hsl(18 10% 34%);
+--faint:hsl(18 8% 48%);--rule:hsl(30 30% 70% / .55);--primary:hsl(354 50% 37%);--primary-soft:hsl(354 50% 37% / .09);
+--ochre:hsl(30 45% 38%);--ink:hsl(20 12% 12%);--ink-fg:hsl(32 22% 86%);--ink-rule:hsl(30 12% 22%);color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:hsl(20 10% 9%);--fg:hsl(30 20% 90%);--card:hsl(20 10% 12.5%);--muted:hsl(20 10% 17%);
+--muted-fg:hsl(30 14% 66%);--faint:hsl(30 10% 50%);--rule:hsl(30 14% 24%);--primary:hsl(354 52% 58%);--primary-soft:hsl(354 50% 50% / .12);
+--ochre:hsl(32 42% 62%);--ink:hsl(20 12% 6.5%);--ink-fg:hsl(32 22% 86%);--ink-rule:hsl(30 12% 18%);color-scheme:dark}}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%;scroll-padding-top:84px}
+body{margin:0;background:var(--bg);color:var(--fg);font:15.5px/1.72 Inter,-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+font-feature-settings:"cv11","ss01";-webkit-font-smoothing:antialiased}
+a{color:var(--primary);text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--primary) 35%,transparent);text-underline-offset:3px}
+a:hover{text-decoration-color:var(--primary)}
+.top{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:14px;height:60px;padding:0 22px;
+background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--rule)}
+.brand{display:flex;align-items:center;gap:9px;color:var(--fg);text-decoration:none}
+.brand svg{width:26px;height:26px;color:var(--primary)}
+.brand b{font:500 20px/1 "Playfair Display",Georgia,serif;letter-spacing:-.01em}
+.brand i{font:600 10.5px/1 Inter,sans-serif;font-style:normal;letter-spacing:.18em;text-transform:uppercase;color:var(--faint);margin-left:4px}
+.top nav{margin-left:auto;display:flex;align-items:center;gap:4px}
+.top nav a{font-size:13px;color:var(--muted-fg);text-decoration:none;padding:6px 10px;border-radius:999px}
+.top nav a:hover{background:var(--muted);color:var(--fg)}
+.top nav a.cta{background:var(--primary);color:hsl(36 30% 96%)}
+.top nav a.cta:hover{filter:brightness(1.08);background:var(--primary);color:hsl(36 30% 96%)}
+.shell{display:grid;grid-template-columns:250px minmax(0,1fr);gap:56px;max-width:1180px;margin:0 auto;padding:0 28px}
+.toc{position:sticky;top:60px;align-self:start;max-height:calc(100vh - 60px);overflow:auto;padding:34px 0 40px}
+.toc p{margin:0 0 10px;font-size:10.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+.toc nav a{display:block;padding:4px 0 4px 12px;border-left:1px solid var(--rule);font-size:13.5px;line-height:1.4;color:var(--muted-fg);text-decoration:none}
+.toc nav a.sub{padding-left:24px;font-size:12.5px}
+.toc nav a:hover,.toc nav a.on{color:var(--fg);border-left-color:var(--primary)}
+.toc .machine{margin-top:26px;padding-top:18px;border-top:1px solid var(--rule)}
+.toc .machine a{display:block;font:12.5px/1.9 "JetBrains Mono",ui-monospace,monospace;color:var(--ochre);text-decoration:none}
+.toc .machine a:hover{text-decoration:underline}
+details.mtoc{display:none}
+main{min-width:0;max-width:790px;padding:44px 0 90px}
+.kicker{margin:0 0 14px;font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--primary)}
+h1,h2,h3{font-family:"Playfair Display",Georgia,serif;font-weight:500;letter-spacing:-.015em;line-height:1.15;color:var(--fg)}
+h1{font-size:clamp(38px,5.4vw,56px);margin:0 0 18px}
+h1+p{font-size:18px;line-height:1.6;color:var(--muted-fg);max-width:640px}
+h2{font-size:30px;margin:64px 0 14px;padding-top:26px;border-top:1px solid var(--rule)}
+h3{font-size:21px;margin:38px 0 10px}
+h2 a.anchor,h3 a.anchor{visibility:hidden;margin-left:8px;color:var(--faint);text-decoration:none;font-family:Inter,sans-serif;font-size:.6em}
+h2:hover a.anchor,h3:hover a.anchor{visibility:visible}
+p,ul,ol{margin:0 0 14px}li{margin:4px 0}li::marker{color:var(--ochre)}
+strong{font-weight:600}
+code{font:500 .86em/1.5 "JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--primary-soft);color:var(--fg);padding:.12em .38em;border-radius:5px}
+.code{margin:16px 0 22px;border-radius:14px;overflow:hidden;background:var(--ink);border:1px solid var(--ink-rule)}
+.code-h{display:flex;align-items:center;justify-content:space-between;padding:7px 14px;border-bottom:1px solid var(--ink-rule);
+font:600 10.5px/1 Inter,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:hsl(30 12% 58%)}
+.copy{display:none;font:500 11.5px/1 Inter,sans-serif;letter-spacing:0;text-transform:none;color:hsl(30 14% 70%);background:transparent;
+border:1px solid var(--ink-rule);border-radius:7px;padding:5px 9px;cursor:pointer}
+.js .copy{display:inline-block}.copy:hover{color:hsl(32 22% 92%);border-color:hsl(30 12% 34%)}
+pre{margin:0;padding:15px 16px;overflow-x:auto}
+pre code{background:none;padding:0;border-radius:0;color:var(--ink-fg);font-size:12.8px;line-height:1.68;font-weight:400}
+.table{margin:14px 0 22px;overflow-x:auto;border:1px solid var(--rule);border-radius:14px;background:var(--card)}
+table{width:100%;border-collapse:collapse;font-size:14px;line-height:1.5}
+th{text-align:left;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:10px 14px;border-bottom:1px solid var(--rule)}
+td{padding:9px 14px;border-top:1px solid var(--rule);vertical-align:top}
+tr:first-child td{border-top:0}thead+tbody tr:first-child td{border-top:0}
+td code{white-space:nowrap}
+table.kv td:first-child{width:170px;color:var(--muted-fg);font-weight:500}
+.endpoint{display:flex;align-items:center;gap:10px;margin:6px 0 18px}
+.endpoint code{background:none;padding:0;font-size:15px}
+.method{font:700 11px/1 "JetBrains Mono",monospace;letter-spacing:.06em;padding:5px 8px;border-radius:6px;color:hsl(36 30% 96%)}
+.method.post{background:var(--primary)}.method.get{background:var(--ochre)}
+.pagebar{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 6px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:6px 12px;border-radius:999px;border:1px solid var(--rule);
+color:var(--muted-fg);text-decoration:none;background:transparent;cursor:pointer;font-family:inherit}
+.pill:hover{color:var(--fg);border-color:var(--faint)}
+button.pill{display:none}.js button.pill{display:inline-flex}
+footer{border-top:1px solid var(--rule);margin-top:40px;padding:26px 0 0;font-size:12.5px;color:var(--faint)}
+footer a{color:var(--muted-fg)}
+@media (max-width:960px){.shell{grid-template-columns:minmax(0,1fr);gap:0;padding:0 16px}.toc{display:none}
+details.mtoc{display:block;margin:18px 0 0;border:1px solid var(--rule);border-radius:12px;background:var(--card)}
+details.mtoc summary{padding:10px 14px;font-size:13px;font-weight:500;cursor:pointer}
+details.mtoc nav{padding:0 14px 12px}details.mtoc nav a{display:block;padding:4px 0;font-size:13.5px;color:var(--muted-fg);text-decoration:none}
+details.mtoc nav a.sub{padding-left:14px;font-size:12.5px}
+main{padding-top:20px}.top{padding:0 16px}.top nav a:not(.cta):not(.lang){display:none}h2{font-size:26px;margin-top:48px}}
+@media print{.top,.toc,.copy,.pagebar{display:none}.shell{display:block}.code{border:1px solid #999}}
+</style>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "TechArticle", "headline": "API de Deiza · Documentación", "description": "Documentación pública de la API de Deiza: compatible con OpenAI Chat Completions, modelos Liquid 5.1, Solid 5 y Gas 4.5, autenticación, streaming, visión, herramientas, búsqueda web, límites y errores.", "inLanguage": "es", "dateModified": "2026-10-04", "url": "https://deiza.org/docs/", "publisher": {"@type": "Organization", "name": "DeizaLab", "url": "https://deiza.org"}, "isAccessibleForFree": true}</script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/" title="Volver a Deiza"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="currentColor" opacity=".12"/><path d="M16 7c3.6 0 6.5 2.6 6.5 6.2 0 2.9-2 4.9-4.6 4.9-2.1 0-3.7-1.5-3.7-3.5 0-1.6 1.2-2.8 2.7-2.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M9.5 15.5c0 4.6 2.9 8.5 6.5 8.5s6.5-3.9 6.5-8.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M16 24v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><b>Deiza</b><i>API</i></a>
+  <nav>
+    <a href="/plans">Planes</a>
+    <a class="lang" href="/docs/en/" hreflang="en">English</a>
+    <a class="cta" href="/api-keys">Claves de API</a>
+  </nav>
+</header>
+<div class="shell">
+  <aside class="toc">
+    <p>En esta página</p>
+    <nav><a href="#inicio-rapido">Inicio rápido</a>
+<a href="#autenticacion">Autenticación</a>
+<a href="#modelos">Modelos</a>
+<a href="#chat-completions">Chat completions</a>
+<a class="sub" href="#streaming">Streaming</a>
+<a class="sub" href="#vision">Visión</a>
+<a class="sub" href="#herramientas-function-calling">Herramientas (function calling)</a>
+<a href="#busqueda-web">Búsqueda web</a>
+<a href="#uso-y-limites">Uso y límites</a>
+<a href="#errores">Errores</a>
+<a href="#herramientas-compatibles">Herramientas compatibles</a>
+<a href="#para-ias-y-rastreadores">Para IAs y rastreadores</a>
+<a href="#cambios">Cambios</a></nav>
+    <div class="machine"><p>Para máquinas</p>
+      <a href="/llms.txt">llms.txt</a><a href="/llms-full.txt">llms-full.txt</a><a href="/openapi.json">openapi.json</a><a href="/docs/api.es.md">api.es.md</a>
+    </div>
+  </aside>
+  <main>
+    <p class="kicker">Documentación · API v1</p>
+    <details class="mtoc"><summary>Índice</summary><nav><a href="#inicio-rapido">Inicio rápido</a>
+<a href="#autenticacion">Autenticación</a>
+<a href="#modelos">Modelos</a>
+<a href="#chat-completions">Chat completions</a>
+<a class="sub" href="#streaming">Streaming</a>
+<a class="sub" href="#vision">Visión</a>
+<a class="sub" href="#herramientas-function-calling">Herramientas (function calling)</a>
+<a href="#busqueda-web">Búsqueda web</a>
+<a href="#uso-y-limites">Uso y límites</a>
+<a href="#errores">Errores</a>
+<a href="#herramientas-compatibles">Herramientas compatibles</a>
+<a href="#para-ias-y-rastreadores">Para IAs y rastreadores</a>
+<a href="#cambios">Cambios</a></nav></details>
+<h1>API de Deiza</h1><div class="pagebar"><a class="pill" href="/docs/api.es.md">Markdown</a><a class="pill" href="/llms.txt">llms.txt</a><a class="pill" href="/openapi.json">OpenAPI</a><button class="pill" type="button" data-copy-md="/docs/api.es.md" data-done="Markdown copiado">Copiar página como Markdown</button></div>
+<p>La API de Deiza le da a tu código los mismos modelos que responden en deiza.org: <strong>Liquid 5.1</strong>, <strong>Solid 5</strong> y <strong>Gas 4.5</strong>. Habla el formato <strong>OpenAI Chat Completions</strong>, así que cualquier SDK de OpenAI o herramienta compatible funciona cambiando la URL base y la clave.</p>
+<div class="table"><table class="kv">
+<tbody>
+<tr>
+<td>URL base</td>
+<td><code>https://deiza.org/api/v1</code></td>
+</tr>
+<tr>
+<td>Autenticación</td>
+<td><code>Authorization: Bearer dz_...</code></td>
+</tr>
+<tr>
+<td>Formato</td>
+<td>OpenAI Chat Completions (JSON, Server-Sent Events para streaming)</td>
+</tr>
+<tr>
+<td>Facturación</td>
+<td>Tu plan de Deiza (Friend o Signet). Sin tarjeta aparte ni facturas por petición</td>
+</tr>
+<tr>
+<td>Para máquinas</td>
+<td><a href="/llms.txt">llms.txt</a> · <a href="/llms-full.txt">llms-full.txt</a> · <a href="/openapi.json">openapi.json</a> · <a href="/docs/api.es.md">esta página en Markdown</a></td>
+</tr>
+</tbody>
+</table></div>
+<p>Esta documentación es pública: sin login y sin JavaScript. Se puede leer, citar, rastrear y pasar a cualquier IA libremente.</p>
+<h2 id="inicio-rapido">Inicio rápido<a class="anchor" href="#inicio-rapido" title="Permanent link">#</a></h2>
+<ol>
+<li>Crea una clave en <a href="/api-keys">deiza.org/api-keys</a>. Se muestra una sola vez: guárdala en una variable de entorno.</li>
+<li>Haz una petición:</li>
+</ol>
+<div class="code"><div class="code-h"><span>bash</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-bash">export DEIZA_API_KEY=&quot;dz_...&quot;
+
+curl https://deiza.org/api/v1/chat/completions \
+  -H &quot;Authorization: Bearer $DEIZA_API_KEY&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{
+    &quot;model&quot;: &quot;deiza-liquid-5.1&quot;,
+    &quot;messages&quot;: [
+      {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: &quot;Responde breve.&quot;},
+      {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;¿Qué es un transformer? En tres frases.&quot;}
+    ]
+  }'
+</code></pre></div>
+<p>Con el SDK oficial de OpenAI para Python (<code>pip install openai</code>):</p>
+<div class="code"><div class="code-h"><span>python</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-python">import os
+from openai import OpenAI
+
+client = OpenAI(base_url=&quot;https://deiza.org/api/v1&quot;, api_key=os.environ[&quot;DEIZA_API_KEY&quot;])
+
+resp = client.chat.completions.create(
+    model=&quot;deiza-liquid-5.1&quot;,
+    messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Resume la relatividad en cinco líneas.&quot;}],
+)
+print(resp.choices[0].message.content)
+</code></pre></div>
+<p>Con el SDK de OpenAI para Node.js (<code>npm install openai</code>):</p>
+<div class="code"><div class="code-h"><span>javascript</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-javascript">import OpenAI from &quot;openai&quot;;
+
+const client = new OpenAI({ baseURL: &quot;https://deiza.org/api/v1&quot;, apiKey: process.env.DEIZA_API_KEY });
+
+const stream = await client.chat.completions.create({
+  model: &quot;deiza-liquid-5.1&quot;,
+  stream: true,
+  messages: [{ role: &quot;user&quot;, content: &quot;Tres ideas de nombre para una cafetería.&quot; }],
+});
+for await (const chunk of stream) process.stdout.write(chunk.choices[0]?.delta?.content ?? &quot;&quot;);
+</code></pre></div>
+<h2 id="autenticacion">Autenticación<a class="anchor" href="#autenticacion" title="Permanent link">#</a></h2>
+<p>Cada petición necesita una clave de API. Envíala en cualquiera de estas cabeceras:</p>
+<div class="code"><div class="code-h"><span>http</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-http">Authorization: Bearer dz_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+X-Api-Key: dz_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+</code></pre></div>
+<ul>
+<li>Las claves empiezan por <code>dz_</code> y son de tu cuenta: las peticiones gastan el uso de tu plan.</li>
+<li>Se gestionan en <a href="/api-keys">deiza.org/api-keys</a>: nombre, caducidad opcional (7, 30, 90 o 365 días), último uso, número de peticiones, renombrar y revocar.</li>
+<li>La clave completa se enseña una sola vez. Deiza guarda un hash, nunca la clave.</li>
+<li>Una clave revocada o caducada recibe <code>401</code> al instante.</li>
+<li>Nunca pongas una clave en el código del navegador ni en un repositorio público. Llama a la API desde tu servidor.</li>
+</ul>
+<h2 id="modelos">Modelos<a class="anchor" href="#modelos" title="Permanent link">#</a></h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Modelo</th>
+<th>Contexto</th>
+<th>Salida máx.</th>
+<th>Visión</th>
+<th>Herramientas</th>
+<th>Para qué</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deiza-liquid-5.1</code> (por defecto)</td>
+<td>262.144</td>
+<td>32.768</td>
+<td>sí</td>
+<td>sí</td>
+<td>Equilibrado y agéntico: código, herramientas, trabajo diario</td>
+</tr>
+<tr>
+<td><code>deiza-solid-5</code></td>
+<td>1.048.576</td>
+<td>32.768</td>
+<td>sí</td>
+<td>sí</td>
+<td>Razonamiento profundo, documentos largos, arquitectura, depuración difícil</td>
+</tr>
+<tr>
+<td><code>deiza-gas-4.5</code></td>
+<td>131.072</td>
+<td>32.768</td>
+<td>no</td>
+<td>sí</td>
+<td>El más rápido y barato: tareas cortas, clasificar, respuestas al momento</td>
+</tr>
+</tbody>
+</table></div>
+<p>Los alias siguen funcionando: <code>deiza-liquid</code>, <code>liquid</code>, <code>deiza-omniscient</code> → Liquid 5.1; <code>deiza-solid</code>, <code>solid</code> → Solid 5; <code>deiza-gas</code>, <code>gas</code> → Gas 4.5. Un modelo que no existe devuelve <code>404 model_not_found</code>.</p>
+<p><code>GET /models</code> los lista (público, sin clave):</p>
+<div class="code"><div class="code-h"><span>bash</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-bash">curl https://deiza.org/api/v1/models
+</code></pre></div>
+<div class="code"><div class="code-h"><span>json</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-json">{
+  &quot;data&quot;: [
+    {
+      &quot;id&quot;: &quot;deiza-liquid-5.1&quot;, &quot;object&quot;: &quot;model&quot;, &quot;owned_by&quot;: &quot;deizalab&quot;,
+      &quot;name&quot;: &quot;Deiza Liquid 5.1&quot;, &quot;default&quot;: true,
+      &quot;context_window&quot;: 262144, &quot;max_output_tokens&quot;: 32768,
+      &quot;vision&quot;: true, &quot;tools&quot;: true, &quot;reasoning_effort&quot;: true,
+      &quot;aliases&quot;: [&quot;deiza-liquid&quot;, &quot;liquid&quot;, &quot;deiza-omniscient&quot;]
+    }
+  ]
+}
+</code></pre></div>
+<h2 id="chat-completions">Chat completions<a class="anchor" href="#chat-completions" title="Permanent link">#</a></h2>
+<p class="endpoint"><span class="method post">POST</span><code>/chat/completions</code></p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Parámetro</th>
+<th>Tipo</th>
+<th>Notas</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>messages</code></td>
+<td>array</td>
+<td>Obligatorio. Roles <code>system</code>, <code>user</code>, <code>assistant</code>, <code>tool</code>. <code>content</code> es un texto o una lista de partes (<code>text</code>, <code>image_url</code>)</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>string</td>
+<td>Opcional, por defecto <code>deiza-liquid-5.1</code></td>
+</tr>
+<tr>
+<td><code>stream</code></td>
+<td>boolean</td>
+<td><code>true</code> para Server-Sent Events</td>
+</tr>
+<tr>
+<td><code>max_tokens</code></td>
+<td>integer</td>
+<td>Por defecto 16.384, máximo 32.768</td>
+</tr>
+<tr>
+<td><code>temperature</code></td>
+<td>number</td>
+<td>De 0 a 1,5, por defecto 0,2</td>
+</tr>
+<tr>
+<td><code>reasoning_effort</code></td>
+<td>string</td>
+<td><code>low</code>, <code>medium</code> o <code>high</code>. Solid piensa en <code>high</code> por defecto; Gas siempre piensa poco</td>
+</tr>
+<tr>
+<td><code>tools</code></td>
+<td>array</td>
+<td>Herramientas (funciones) en formato OpenAI, hasta 64</td>
+</tr>
+<tr>
+<td><code>tool_choice</code></td>
+<td>string u objeto</td>
+<td><code>auto</code>, <code>none</code>, <code>required</code> o <code>{"type": "function", "function": {"name": "..."}}</code></td>
+</tr>
+<tr>
+<td><code>parallel_tool_calls</code></td>
+<td>boolean</td>
+<td>Permite varias llamadas a herramientas en un turno</td>
+</tr>
+</tbody>
+</table></div>
+<p>El resto de parámetros de OpenAI (<code>n</code>, <code>top_p</code>, <code>seed</code>, <code>response_format</code>, <code>logprobs</code>...) se aceptan y se ignoran.</p>
+<p>Respuesta:</p>
+<div class="code"><div class="code-h"><span>json</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-json">{
+  &quot;id&quot;: &quot;chatcmpl-360bbd1c-87aa-4bf2-9190-da6a414c48a8&quot;,
+  &quot;object&quot;: &quot;chat.completion&quot;,
+  &quot;created&quot;: 1791074949,
+  &quot;model&quot;: &quot;deiza-liquid-5.1&quot;,
+  &quot;choices&quot;: [
+    { &quot;index&quot;: 0, &quot;message&quot;: { &quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;...&quot; }, &quot;finish_reason&quot;: &quot;stop&quot; }
+  ],
+  &quot;usage&quot;: { &quot;prompt_tokens&quot;: 71, &quot;completion_tokens&quot;: 35, &quot;total_tokens&quot;: 106 },
+  &quot;deiza_usage_state&quot;: &quot;ok&quot;
+}
+</code></pre></div>
+<p><code>deiza_usage_state</code> vale <code>ok</code>, o <code>grace</code> cuando tu plan se agotó en mitad del trabajo y Deiza está terminando con el margen de cortesía (ver <a href="#uso-y-limites">Uso y límites</a>).</p>
+<h3 id="streaming">Streaming<a class="anchor" href="#streaming" title="Permanent link">#</a></h3>
+<p>Con <code>"stream": true</code> la respuesta llega como Server-Sent Events, una línea <code>data:</code> por fragmento, y termina con <code>data: [DONE]</code>:</p>
+<div class="code"><div class="code-h"><span>text</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-text">data: {&quot;id&quot;:&quot;chatcmpl-...&quot;,&quot;object&quot;:&quot;chat.completion.chunk&quot;,&quot;model&quot;:&quot;deiza-gas-4.5&quot;,&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{&quot;role&quot;:&quot;assistant&quot;,&quot;content&quot;:&quot;Ho&quot;},&quot;finish_reason&quot;:null}]}
+
+data: {&quot;id&quot;:&quot;chatcmpl-...&quot;,&quot;object&quot;:&quot;chat.completion.chunk&quot;,&quot;model&quot;:&quot;deiza-gas-4.5&quot;,&quot;choices&quot;:[{&quot;index&quot;:0,&quot;delta&quot;:{&quot;content&quot;:&quot;la&quot;},&quot;finish_reason&quot;:&quot;stop&quot;}]}
+
+: deiza-usage {&quot;state&quot;: &quot;ok&quot;, &quot;pct&quot;: 0.4, &quot;weekly_pct&quot;: 0.1}
+
+data: [DONE]
+</code></pre></div>
+<p>Las líneas que empiezan por <code>:</code> son comentarios SSE (pings para mantener la conexión y un resumen de uso al final). Los clientes SSE normales y los SDK de OpenAI los ignoran. Los modelos que razonan pueden mandar <code>delta.reasoning</code> antes del texto visible.</p>
+<h3 id="vision">Visión<a class="anchor" href="#vision" title="Permanent link">#</a></h3>
+<p>Liquid 5.1 y Solid 5 leen imágenes. Mándalas como partes <code>image_url</code>, con una URL <code>https://</code> o una URL <code>data:</code>:</p>
+<div class="code"><div class="code-h"><span>json</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-json">{
+  &quot;model&quot;: &quot;deiza-liquid-5.1&quot;,
+  &quot;messages&quot;: [{
+    &quot;role&quot;: &quot;user&quot;,
+    &quot;content&quot;: [
+      { &quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;¿Qué hay en esta foto?&quot; },
+      { &quot;type&quot;: &quot;image_url&quot;, &quot;image_url&quot;: { &quot;url&quot;: &quot;https://example.com/foto.jpg&quot; } }
+    ]
+  }]
+}
+</code></pre></div>
+<h3 id="herramientas-function-calling">Herramientas (function calling)<a class="anchor" href="#herramientas-function-calling" title="Permanent link">#</a></h3>
+<p>Funciona igual que en OpenAI: declaras <code>tools</code>, el modelo responde con <code>tool_calls</code>, ejecutas la función y devuelves el resultado como mensaje <code>tool</code>.</p>
+<div class="code"><div class="code-h"><span>python</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-python">tools = [{
+    &quot;type&quot;: &quot;function&quot;,
+    &quot;function&quot;: {
+        &quot;name&quot;: &quot;get_weather&quot;,
+        &quot;description&quot;: &quot;Tiempo actual en una ciudad&quot;,
+        &quot;parameters&quot;: {
+            &quot;type&quot;: &quot;object&quot;,
+            &quot;properties&quot;: {&quot;city&quot;: {&quot;type&quot;: &quot;string&quot;}},
+            &quot;required&quot;: [&quot;city&quot;],
+        },
+    },
+}]
+
+first = client.chat.completions.create(model=&quot;deiza-liquid-5.1&quot;, tools=tools,
+    messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;¿Qué tiempo hace en Valencia?&quot;}])
+call = first.choices[0].message.tool_calls[0]
+
+second = client.chat.completions.create(model=&quot;deiza-liquid-5.1&quot;, tools=tools, messages=[
+    {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;¿Qué tiempo hace en Valencia?&quot;},
+    first.choices[0].message,
+    {&quot;role&quot;: &quot;tool&quot;, &quot;tool_call_id&quot;: call.id, &quot;content&quot;: '{&quot;temp_c&quot;: 24, &quot;cielo&quot;: &quot;despejado&quot;}'},
+])
+print(second.choices[0].message.content)
+</code></pre></div>
+<h2 id="busqueda-web">Búsqueda web<a class="anchor" href="#busqueda-web" title="Permanent link">#</a></h2>
+<p><code>POST /search</code> da a tus agentes la misma búsqueda que usa Deiza: respuestas de la web con fuentes, o fotos verificadas.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Campo</th>
+<th>Tipo</th>
+<th>Notas</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>query</code></td>
+<td>string</td>
+<td>Obligatorio, hasta 300 caracteres</td>
+</tr>
+<tr>
+<td><code>type</code></td>
+<td>string</td>
+<td><code>web</code> o <code>images</code> (por defecto <code>images</code>)</td>
+</tr>
+<tr>
+<td><code>num</code></td>
+<td>integer</td>
+<td>De 1 a 12, por defecto 6</td>
+</tr>
+<tr>
+<td><code>language</code></td>
+<td>string</td>
+<td>Código ISO, por defecto <code>es</code></td>
+</tr>
+</tbody>
+</table></div>
+<div class="code"><div class="code-h"><span>bash</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-bash">curl https://deiza.org/api/v1/search \
+  -H &quot;Authorization: Bearer $DEIZA_API_KEY&quot; -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;query&quot;: &quot;torre eiffel&quot;, &quot;type&quot;: &quot;images&quot;, &quot;num&quot;: 4}'
+</code></pre></div>
+<div class="code"><div class="code-h"><span>json</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-json">{
+  &quot;type&quot;: &quot;images&quot;,
+  &quot;query&quot;: &quot;torre eiffel&quot;,
+  &quot;results&quot;: [
+    { &quot;url&quot;: &quot;https://.../La-Torre-Eiffel.jpg&quot;, &quot;title&quot;: &quot;...&quot;, &quot;source&quot;: &quot;https://...&quot; }
+  ]
+}
+</code></pre></div>
+<p>Con <code>"type": "web"</code> la respuesta trae además <code>answer</code>, un resumen corto, y en <code>results</code> el <code>title</code> y la <code>url</code> de cada fuente. Límite: 40 búsquedas por minuto y cuenta.</p>
+<h2 id="uso-y-limites">Uso y límites<a class="anchor" href="#uso-y-limites" title="Permanent link">#</a></h2>
+<p>La API está incluida en los planes <strong>Friend</strong> y <strong>Signet</strong> (con el plan Free devuelve <code>403 plan_required</code>). Gasta el mismo uso que el chat y Deiza Code:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Plan</th>
+<th>Por ventana de 5 h</th>
+<th>Por semana</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Friend</td>
+<td>4M</td>
+<td>35M</td>
+</tr>
+<tr>
+<td>Signet</td>
+<td>8M</td>
+<td>85M</td>
+</tr>
+</tbody>
+</table></div>
+<ul>
+<li><strong>Ventana de 5 horas.</strong> Se abre con tu primera petición y vuelve a cero 5 horas después.</li>
+<li><strong>Semana.</strong> Un periodo fijo de 7 días que se reinicia entero, siempre el mismo día y a la misma hora (lo ves en <a href="/plans">Planes</a> y en <code>GET /usage</code>).</li>
+<li><strong>Unidades de uso.</strong> Cada petición se mide por lo que cuesta de verdad: entrada nueva ×1, entrada en caché ×0,1, contexto releído ×0,25, salida y razonamiento ×5. Después se aplica el multiplicador del modelo:</li>
+</ul>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Modelo</th>
+<th>Friend</th>
+<th>Signet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Gas 4.5</td>
+<td>×0,35</td>
+<td>×0,35</td>
+</tr>
+<tr>
+<td>Liquid 5.1</td>
+<td>×1</td>
+<td>×1</td>
+</tr>
+<tr>
+<td>Solid 5</td>
+<td>×2</td>
+<td>×1,8</td>
+</tr>
+</tbody>
+</table></div>
+<ul>
+<li><strong>Margen de cortesía.</strong> Si el límite se acaba mientras trabajas (alguna petición en los últimos 15 minutos), se sirve hasta un 12 % más de la ventana para no cortar lo que está a medias. Mientras tanto <code>deiza_usage_state</code> y la cabecera <code>X-Deiza-Usage-State</code> dicen <code>grace</code>.</li>
+</ul>
+<p><code>GET /usage</code> devuelve el estado en vivo:</p>
+<div class="code"><div class="code-h"><span>json</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-json">{
+  &quot;plan&quot;: &quot;friend&quot;,
+  &quot;tokens_used&quot;: 1240800, &quot;token_limit&quot;: 4000000, &quot;tokens_remaining&quot;: 2759200,
+  &quot;pct&quot;: 31.0, &quot;state&quot;: &quot;ok&quot;, &quot;limit_scope&quot;: &quot;window&quot;,
+  &quot;next_reset&quot;: &quot;2026-10-04T05:26:55Z&quot;, &quot;reset_in_seconds&quot;: 15320,
+  &quot;weekly_used&quot;: 9800000, &quot;weekly_limit&quot;: 35000000, &quot;weekly_pct&quot;: 28.0,
+  &quot;weekly_reset_at&quot;: &quot;2026-10-10T16:00:00Z&quot;, &quot;weekly_reset_in_seconds&quot;: 486000,
+  &quot;exhausted&quot;: false
+}
+</code></pre></div>
+<h2 id="errores">Errores<a class="anchor" href="#errores" title="Permanent link">#</a></h2>
+<p>Los errores siguen el formato de OpenAI, así que los SDK lanzan la excepción correcta:</p>
+<div class="code"><div class="code-h"><span>json</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-json">{
+  &quot;error&quot;: {
+    &quot;message&quot;: &quot;The model 'gpt-9' does not exist. Use one of: deiza-liquid-5.1, deiza-solid-5, deiza-gas-4.5 (GET https://deiza.org/api/v1/models).&quot;,
+    &quot;type&quot;: &quot;not_found_error&quot;,
+    &quot;code&quot;: &quot;model_not_found&quot;,
+    &quot;param&quot;: &quot;model&quot;
+  }
+}
+</code></pre></div>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Estado</th>
+<th><code>code</code></th>
+<th>Significado</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>400</td>
+<td><code>invalid_request</code></td>
+<td>Cuerpo mal formado (por ejemplo, sin <code>messages</code>)</td>
+</tr>
+<tr>
+<td>401</td>
+<td><code>missing_api_key</code>, <code>invalid_api_key</code></td>
+<td>Sin clave, o una incorrecta, revocada o caducada</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>plan_required</code></td>
+<td>Tu plan no incluye la API (Free) o ese modelo</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>model_not_found</code></td>
+<td>Id de modelo desconocido</td>
+</tr>
+<tr>
+<td>429</td>
+<td><code>usage_limit</code></td>
+<td>Se agotó la ventana de 5 h o la semana. <code>Retry-After</code> dice cuándo se reinicia</td>
+</tr>
+<tr>
+<td>429</td>
+<td><code>model_sublimit</code></td>
+<td>Límite propio de ese modelo en la ventana actual</td>
+</tr>
+<tr>
+<td>5xx</td>
+<td><code>api_error</code>, <code>overloaded_error</code></td>
+<td>Problema temporal. Reintenta con espera exponencial (1 s, 2 s, 4 s...)</td>
+</tr>
+</tbody>
+</table></div>
+<p>Durante un stream, un error llega como una línea <code>data:</code> con un objeto <code>error</code>.</p>
+<h2 id="herramientas-compatibles">Herramientas compatibles<a class="anchor" href="#herramientas-compatibles" title="Permanent link">#</a></h2>
+<p>Funciona todo lo que acepte un endpoint compatible con OpenAI: los SDK de OpenAI, LangChain, LlamaIndex, Vercel AI SDK, Cursor, Continue, Cline, Aider, Open WebUI, LibreChat, n8n...</p>
+<div class="code"><div class="code-h"><span>bash</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-bash">OPENAI_BASE_URL=https://deiza.org/api/v1
+OPENAI_API_KEY=dz_...
+OPENAI_MODEL=deiza-liquid-5.1
+</code></pre></div>
+<p>La URL base anterior, <code>https://deiza.org/api/code</code>, sigue funcionando con las mismas rutas.</p>
+<h2 id="para-ias-y-rastreadores">Para IAs y rastreadores<a class="anchor" href="#para-ias-y-rastreadores" title="Permanent link">#</a></h2>
+<p>Todo esto es público y estable, para que asistentes, agentes y rastreadores lo lean sin login:</p>
+<ul>
+<li><a href="/llms.txt"><code>/llms.txt</code></a>: índice corto de la API para modelos de lenguaje.</li>
+<li><a href="/llms-full.txt"><code>/llms-full.txt</code></a>: toda esta documentación en Markdown (inglés).</li>
+<li><a href="/openapi.json"><code>/openapi.json</code></a>: especificación OpenAPI 3.1 de todos los endpoints.</li>
+<li><a href="/docs/api.es.md"><code>/docs/api.es.md</code></a> y <a href="/docs/api.md"><code>/docs/api.md</code></a>: esta página en Markdown (español e inglés).</li>
+<li><code>GET https://deiza.org/api/v1</code>: la API se describe a sí misma en JSON.</li>
+</ul>
+<p>Todos permiten peticiones desde otros orígenes (<code>Access-Control-Allow-Origin: *</code>).</p>
+<h2 id="cambios">Cambios<a class="anchor" href="#cambios" title="Permanent link">#</a></h2>
+<ul>
+<li><strong>4-oct-2026 (más tarde).</strong> Topes semanales: Friend 35M, Signet 85M. La API y Deiza Code son de los planes de pago (Free recibe <code>403 plan_required</code>).</li>
+<li><strong>4-oct-2026.</strong> URL base versionada <code>/api/v1</code>. Errores en formato OpenAI. <code>404 model_not_found</code> para modelos desconocidos. <code>GET /models</code> público con ventanas de contexto y capacidades. <code>GET /usage</code> con la fecha de reinicio semanal. Documentación pública y rastreable con llms.txt y OpenAPI. Consola de claves con caducidad, número de peticiones y renombrar.</li>
+</ul>
+    <footer>Actualizado el 4 de octubre de 2026 · <a href="/llms.txt">llms.txt</a> · <a href="/openapi.json">openapi.json</a> · <a href="/docs/api.es.md">Markdown</a> · <a href="/">deiza.org</a></footer>
+  </main>
+</div>
+<script>
+document.documentElement.classList.add('js');
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('.copy');
+  if(b){const code=b.closest('.code').querySelector('code').innerText;try{await navigator.clipboard.writeText(code);b.textContent=b.dataset.done;setTimeout(()=>b.textContent=b.dataset.label,1400)}catch(_){}}
+  const p=e.target.closest('[data-copy-md]');
+  if(p){try{const t=await (await fetch(p.dataset.copyMd)).text();await navigator.clipboard.writeText(t);const l=p.textContent;p.textContent=p.dataset.done;setTimeout(()=>p.textContent=l,1600)}catch(_){location.href=p.dataset.copyMd}}
+});
+const links=[...document.querySelectorAll('.toc nav a')];const map=new Map(links.map(a=>[a.getAttribute('href').slice(1),a]));
+const io=new IntersectionObserver(es=>{for(const en of es){if(en.isIntersecting){links.forEach(a=>a.classList.remove('on'));const a=map.get(en.target.id);if(a)a.classList.add('on')}}},{rootMargin:'-80px 0px -70% 0px'});
+document.querySelectorAll('main h2[id],main h3[id]').forEach(h=>io.observe(h));
+</script>
+</body>
+</html>

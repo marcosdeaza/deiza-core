@@ -1,5 +1,9 @@
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
+/** Server-relative asset URLs (/api/files/...) must point at the API host inside the native app. */
+export const assetUrl = (u?: string | null): string | undefined =>
+  u ? (u.startsWith('/') ? `${API_URL}${u}` : u) : undefined;
+
 /** Error with a stable code the UI translates (see `apiErrorMessage`). */
 export class ApiError extends Error {
   code: string;
@@ -90,6 +94,8 @@ export interface Chat {
   updated_at: string;
   pinned?: boolean;
   message_count: number;
+  /** deiza work v1: 'work' for Deiza Work jobs */
+  mode?: 'chat' | 'work';
 }
 
 export interface Project {
@@ -108,6 +114,8 @@ export interface ProjectFile {
   name: string;
   mime_type: string;
   is_image: boolean;
+  /** Pinned files are listed first in the project panel. */
+  pinned?: boolean;
   size_chars: number;
   created_at: string;
 }
@@ -118,6 +126,13 @@ export interface CodeKey {
   key_prefix: string;
   last_used_at?: string | null;
   created_at: string;
+  /** api pro v1 */
+  display?: string;
+  last4?: string | null;
+  use_count?: number;
+  source?: 'web' | 'cli' | string;
+  expires_at?: string | null;
+  expired?: boolean;
 }
 
 class APIService {
@@ -256,6 +271,17 @@ class APIService {
   }
 
   // Demo chat — no auth required, fast model only, stateless (memory in-browser only)
+  /** deiza work v1: the user's own hands on the Work browser */
+  async workBrowser(chatId: number, body: Record<string, any>): Promise<any> {
+    const resp = await fetch(`${this.baseUrl}/api/work/browser/${chatId}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) throw new Error(`work_browser_${resp.status}`);
+    return resp.json();
+  }
+
   async sendDemoMessage(
     message: string,
     files: any[] = [],
@@ -492,6 +518,8 @@ class APIService {
     onChatId?: (chatId: number) => void,
     /** Usage ran out during this answer: Markdown handoff to continue elsewhere */
     onHandoff?: (handoff: { name: string; url?: string; content: string }) => void,
+    /** deiza work v1: live Work events (steps, plan, files, browser frames) */
+    onWork?: (ev: any) => void,
   ): () => void {
     const controller = new AbortController();
     let aborted = false;
@@ -559,6 +587,7 @@ class APIService {
               if (parsed.chunk) onChunk(parsed.chunk);
               if (parsed.images && onImages) onImages(parsed.images);
               if (parsed.handoff && onHandoff) onHandoff(parsed.handoff);
+              if (parsed.work && onWork) onWork(parsed.work);
               if (parsed.done) { completed = true; clearWatchdog(); onDone(resolvedChatId!, parsed.artifact, parsed.msg_id); return; }
             } catch (parseErr: any) {
               if (parseErr.message && !parseErr.message.includes('JSON')) throw parseErr;
@@ -639,16 +668,20 @@ class APIService {
     return this.request('/api/skills', { method: 'POST', body: JSON.stringify(payload) });
   }
 
-  // ── Pragmathic Code API keys ──
-  async getCodeKeys(): Promise<{ keys: CodeKey[] }> {
+  // ── API keys (deiza.org/api-keys) ──
+  async getCodeKeys(): Promise<{ keys: CodeKey[]; max_keys?: number }> {
     return this.request('/api/code/keys');
   }
 
-  async createCodeKey(name: string): Promise<{ key: CodeKey; raw_key: string }> {
+  async createCodeKey(name: string, expiresInDays?: number): Promise<{ key: CodeKey; raw_key: string }> {
     return this.request('/api/code/keys', {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, expires_in_days: expiresInDays || null }),
     });
+  }
+
+  async renameCodeKey(kid: number, name: string): Promise<{ key: CodeKey }> {
+    return this.request(`/api/code/keys/${kid}`, { method: 'PATCH', body: JSON.stringify({ name }) });
   }
 
   async revokeCodeKey(kid: number): Promise<{ ok: boolean }> {
