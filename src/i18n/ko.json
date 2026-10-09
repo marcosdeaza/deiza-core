@@ -675,5 +675,21 @@
  "aud.input.change": "오디오 입력 변경",
  "aud.input.mic": "마이크 {n}",
  "aud.input.set": "오디오 입력: {name}",
- "aud.input.hint": "마이크를 고르려면 우클릭하거나 길게 누르세요"
+ "aud.input.hint": "마이크를 고르려면 우클릭하거나 길게 누르세요",
+  "l55.upcoming": "곧 출시 · 10월 12일",
+  "l55.available": "지금 이용 가능",
+  "l55.arrives": "10월 12일 출시",
+  "l55.lede": "역대 가장 뛰어난 Liquid.",
+  "l55.desc": "10월 12일부터 무료를 포함한 모든 요금제에서 이용할 수 있습니다. 필요할 때 깊이 생각하며 Liquid의 속도를 유지합니다.",
+  "l55.desc.live": "무료를 포함한 모든 요금제에서 이용할 수 있습니다. 필요할 때 깊이 생각하며 Liquid의 속도를 유지합니다.",
+  "l55.legacy": "Liquid 5.1은 다른 모델에서 계속 이용할 수 있습니다.",
+  "l55.try": "Liquid 5.5 써 보기",
+  "l55.read": "소식 읽기",
+  "model.liquid51.tag": "이전 세대",
+  "model.liquid51.detail": "이전 Liquid: 빠르고 균형 잡힌 모델.",
+  "pl.free.f1.l55": "Gas 4.5 및 Liquid 5.5",
+  "pl.friend.f1.l55": "Gas 4.5, Liquid 5.5 및 Solid 5",
+  "an.try.l55": "Liquid 5.5 써 보기",
+  "st.news.desc.l55": "Liquid 5.5, Skills, 그리고 Deiza 모델의 이야기",
+  "st.chain.on.l55": "모델이 응답하지 않으면 Deiza가 같은 계열의 이전 버전을 시도합니다 (Liquid 5.5 → Liquid 5.1). Solid는 절대 Gas로 내려가지 않습니다."
 }

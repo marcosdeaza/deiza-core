@@ -1,3 +1,4 @@
+import { liquidName } from '@/lib/launch';
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -434,7 +435,7 @@ const Plans = () => {
               </thead>
               <tbody>
                 {([
-                  [t('pl.cmp.models'), 'Gas 4.5 · Liquid 5.1', 'Gas · Liquid · Solid 5', 'Gas · Liquid · Solid 5'],
+                  [t('pl.cmp.models'), `Gas 4.5 · ${liquidName()}`, 'Gas · Liquid · Solid 5', 'Gas · Liquid · Solid 5'],
                   [t('pl.cmp.tokens'), '300k', '4M', '8M'],
                   [t('pl.cmp.weekly'), '2.5M', '35M', '85M'],
                   [t('pl.cmp.grace'), '✓', '✓', '✓'],

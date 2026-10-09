@@ -1,3 +1,4 @@
+import { liquid55Live } from '@/lib/launch';
 /**
  * Deiza news timeline — product announcements shown at /noticias.
  * Newest first. `art` picks the hand-drawn illustration (see Sketch.tsx).
@@ -17,7 +18,79 @@ export interface NewsItem {
   upcoming?: boolean;
 }
 
+
+const LIQUID55_PRE = {
+  "tag": {
+    "es": "Próximamente",
+    "en": "Coming soon"
+  },
+  "title": {
+    "es": "Liquid 5.5: un océano de posibilidades, el 12 de octubre",
+    "en": "Liquid 5.5: an ocean of possibilities, arriving October 12"
+  },
+  "excerpt": {
+    "es": "El Liquid más capaz de todos los tiempos llega a todos los planes, también al gratuito. Más profundidad cuando hace falta, un millón de tokens de contexto y la rapidez de Liquid.",
+    "en": "The most capable Liquid ever arrives on every plan, including free. More depth when needed, a million-token context window and the speed of Liquid."
+  },
+  "body": {
+    "es": [
+      "El 12 de octubre llega Liquid 5.5, el Liquid más capaz de todos los tiempos. Estará disponible en todos los planes, también en el gratuito, y será el Liquid por defecto del chat y de Work. Hasta entonces, Liquid 5.1 sigue siendo el modelo activo.",
+      "Se acerca mucho al rendimiento de Solid 5 porque comparte base con él. La diferencia está en cómo piensa: Liquid profundiza solo cuando la pregunta lo pide y sigue siendo rápido en la conversación de cada día. Solid 5 sigue siendo el modelo más capaz de Deiza.",
+      "Es el primer Liquid con una ventana de contexto de un millón de tokens. Más espacio para mantener el hilo de una conversación larga, volver a los requisitos iniciales y trabajar con documentos extensos sin perder de vista lo que has pedido.",
+      "Entiende imágenes, capturas y documentos, como ya hacía Liquid 5.1. La mejora se nota en conversaciones largas, en la búsqueda web y en Work, el agente que navega, busca fotos y entrega presentaciones y PDF.",
+      "Liquid 5.1 se queda disponible en Más modelos como generación anterior. El 12 de octubre el cambio será automático: podrás seguir con el nuevo Liquid o elegir 5.1 cuando lo prefieras. Deiza Code y la API siguen con Liquid 5.1."
+    ],
+    "en": [
+      "Liquid 5.5 arrives on October 12: the most capable Liquid ever. It will be available on every plan, including free, and become the default Liquid in chat and Work. Until then, Liquid 5.1 remains the active model.",
+      "It comes very close to Solid 5 in performance because they share a foundation. The difference is how it thinks: Liquid goes deeper only when the question calls for it and stays fast in everyday conversation. Solid 5 remains Deiza’s most capable model.",
+      "It is the first Liquid with a one-million-token context window. More room to keep track of a long conversation, return to the original requirements and work with lengthy documents while keeping your request in view.",
+      "It understands images, screenshots and documents, as Liquid 5.1 already did. The improvements show in long conversations, web search and Work, the agent that browses, finds photos and delivers presentations and PDFs.",
+      "Liquid 5.1 remains available in More models as the previous generation. The change will happen automatically on October 12: keep using the new Liquid or choose 5.1 whenever you prefer. Deiza Code and the API remain on Liquid 5.1."
+    ]
+  }
+};
+const LIQUID55_LIVE = {
+  "tag": {
+    "es": "Ya disponible",
+    "en": "Available now"
+  },
+  "title": {
+    "es": "Liquid 5.5: un océano de posibilidades",
+    "en": "Liquid 5.5: an ocean of possibilities"
+  },
+  "excerpt": {
+    "es": "El Liquid más capaz de todos los tiempos ya está en todos los planes, también en el gratuito. Más profundidad cuando hace falta, un millón de tokens de contexto y la rapidez de Liquid.",
+    "en": "The most capable Liquid ever is now on every plan, including free. More depth when needed, a million-token context window and the speed of Liquid."
+  },
+  "body": {
+    "es": [
+      "Liquid 5.5 ya está disponible: el Liquid más capaz de todos los tiempos. Llega a todos los planes, también al gratuito, y es el Liquid por defecto del chat y de Work.",
+      "Se acerca mucho al rendimiento de Solid 5 porque comparte base con él. La diferencia está en cómo piensa: Liquid profundiza solo cuando la pregunta lo pide y sigue siendo rápido en la conversación de cada día. Solid 5 sigue siendo el modelo más capaz de Deiza.",
+      "Es el primer Liquid con una ventana de contexto de un millón de tokens. Más espacio para mantener el hilo de una conversación larga, volver a los requisitos iniciales y trabajar con documentos extensos sin perder de vista lo que has pedido.",
+      "Entiende imágenes, capturas y documentos, como ya hacía Liquid 5.1. La mejora se nota en conversaciones largas, en la búsqueda web y en Work, el agente que navega, busca fotos y entrega presentaciones y PDF.",
+      "Liquid 5.1 sigue disponible en Más modelos como generación anterior. Liquid 5.5 es ahora la opción por defecto: puedes seguir con el nuevo Liquid o elegir 5.1 cuando lo prefieras. Deiza Code y la API siguen con Liquid 5.1."
+    ],
+    "en": [
+      "Liquid 5.5 is now available: the most capable Liquid ever. It is included in every plan, including free, and is the default Liquid in chat and Work.",
+      "It comes very close to Solid 5 in performance because they share a foundation. The difference is how it thinks: Liquid goes deeper only when the question calls for it and stays fast in everyday conversation. Solid 5 remains Deiza’s most capable model.",
+      "It is the first Liquid with a one-million-token context window. More room to keep track of a long conversation, return to the original requirements and work with lengthy documents while keeping your request in view.",
+      "It understands images, screenshots and documents, as Liquid 5.1 already did. The improvements show in long conversations, web search and Work, the agent that browses, finds photos and delivers presentations and PDFs.",
+      "Liquid 5.1 remains available in More models as the previous generation. Liquid 5.5 is now the default: keep using the new Liquid or choose 5.1 whenever you prefer. Deiza Code and the API remain on Liquid 5.1."
+    ]
+  }
+};
+
 export const NEWS: NewsItem[] = [
+  {
+    id: 'liquid55', date: '2026-10-09', art: 'drop',
+    get upcoming() { return !liquid55Live(); },
+    get tag() { return (liquid55Live() ? LIQUID55_LIVE : LIQUID55_PRE).tag; },
+    get title() { return (liquid55Live() ? LIQUID55_LIVE : LIQUID55_PRE).title; },
+    get excerpt() { return (liquid55Live() ? LIQUID55_LIVE : LIQUID55_PRE).excerpt; },
+    get body() { return (liquid55Live() ? LIQUID55_LIVE : LIQUID55_PRE).body; },
+    hero: '/art/liquid55.webp',
+    mural: { src: '/art/liquid55-mural.webp', caption: { es: 'Mar abierto, luz y profundidad: un horizonte más amplio para Liquid.', en: 'Open sea, light and depth: a wider horizon for Liquid.' }, after: 2 },
+  },
   {
     id: 'capu',
     date: '2026-10-01',

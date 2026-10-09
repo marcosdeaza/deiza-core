@@ -4,6 +4,7 @@ def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     return _orig_getaddrinfo(host, port, _socket.AF_INET, type, proto, flags)
 _socket.getaddrinfo = _ipv4_only_getaddrinfo
 import os
+from liquid55_launch import liquid55_enabled
 import json
 import re
 import base64
@@ -630,6 +631,7 @@ class ModelService:
         # Selectable variants (same billing tier as their parent key)
         self.variants = {
             'liquid45': ('pro', _m('liquid45', _m('liquid'))),   # Liquid 4.5 — previous generation
+            'liquid51': ('pro', _m('liquid')),
         }
 
         # Per-model generation configs
@@ -3098,24 +3100,32 @@ GENERATION RULES:
         last = next((c for c in reversed(contents or []) if c.get('role') == 'user'), None)
         return bool(last and any((p.get('inline_data') or p.get('inlineData') or {}).get('data') for p in last.get('parts', [])))
 
-    def _chat_engine(self, model_key: str, contents: list, message: str, files, mode: str):
+    def _chat_engine(self, model_key: str, contents: list, message: str, files, mode: str, variant: str = None):
         """Chat engines on cloud (chat engines v1). model/the image endpoint is only for image generation and
         editing, plus the emergency chain when an cloud engine cannot answer.
           Solid 5    -> the model K3 (API 2)
-          Liquid 5.1 -> the model K2.5 (API 1), vision and tools
+          Liquid 5.5 -> the model K3 (API 2), adaptive effort; only with LIQUID55=1 in .env (launch 12-oct-2026)
+          Liquid 5.1 -> the model K2.5 (API 1), vision and tools; also the fallback of both engines above
           Gas 4.5    -> the fast model (API 1); the vision model (API 1) when the turn carries an image"""
         engine_url = os.getenv('CODE_API_URL', '')
         engine_key = os.getenv('CODE_API_KEY', '')
-        if model_key in ('solid', 'ultra') and os.getenv('SOLID_API_KEY'):
-            return {'name': 'Solid 5', 'url': os.getenv('SOLID_API_URL', ''),
-                    'key': os.getenv('SOLID_API_KEY', ''), 'model': os.getenv('CODE_MODEL_SOLID', ''),
-                    'effort': 'high', 'vision': True, 'read_timeout': 300}
+        # liquid 5.5 v1: the Liquid 5.1 engine is also the fallback of Solid 5 and Liquid 5.5 when their account is saturated
+        adaptive = 'high' if len(contents) > 2 else self._pick_thinking_level('liquid', message, files, mode)
+        k25 = ({'name': 'Liquid 5.1', 'url': engine_url, 'key': engine_key,
+                'model': os.getenv('CODE_MODEL_LIQUID', ''),
+                'effort': adaptive, 'vision': True, 'read_timeout': 90} if engine_key else None)
+        k3 = ({'url': os.getenv('SOLID_API_URL', ''),
+               'key': os.getenv('SOLID_API_KEY', ''), 'model': os.getenv('CODE_MODEL_SOLID', ''),
+               'vision': True} if os.getenv('SOLID_API_KEY') else None)
+        if model_key in ('solid', 'ultra') and k3:
+            return dict(k3, name='Solid 5', effort='high', read_timeout=300,
+                        fallback=(dict(k25, effort='high', read_timeout=180) if k25 else None))
+        if model_key in ('liquid', 'pro') and k3 and variant not in ('liquid51', 'liquid45') and liquid55_enabled():
+            return dict(k3, name='Liquid 5.5', effort=adaptive, read_timeout=180, fallback=k25)
         if not engine_key:
             return None
         if model_key in ('liquid', 'pro'):
-            return {'name': 'Liquid 5.1', 'url': engine_url, 'key': engine_key,
-                    'model': os.getenv('CODE_MODEL_LIQUID', ''),
-                    'effort': ('high' if len(contents) > 2 else self._pick_thinking_level('liquid', message, files, mode)), 'vision': True, 'read_timeout': 90}
+            return k25
         if model_key in ('gas', 'fast'):
             if self._turn_has_image(contents):
                 return {'name': 'Gas 4.5 Vision', 'url': engine_url, 'key': engine_key,
@@ -3732,8 +3742,10 @@ GENERATION RULES:
         # Every chat model generates on cloud (see _chat_engine). Everything above (photos, research,
         # decks, the prompt) is shared; only the generation changes. If the cloud engine cannot answer
         # before writing anything, the model chain below takes over as a safety net.
-        _engine = _apply_effort(self._chat_engine(model_key, contents, message, files, mode), effort)
-        if _engine:
+        _engine = _apply_effort(self._chat_engine(model_key, contents, message, files, mode, variant), effort)
+        # liquid 5.5 v1: a saturated or failing engine hands over to its fallback before the emergency chain
+        _engines = [e for e in (_engine, _apply_effort((_engine or {}).get('fallback'), effort)) if e]
+        for _engine in _engines:
             _engine_text = False
             _t0 = time.time()
             try:

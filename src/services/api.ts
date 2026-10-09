@@ -504,7 +504,7 @@ class APIService {
   streamMessage(
     message: string,
     chatId: number | undefined,
-    model: 'gas' | 'liquid' | 'solid' | 'liquid45' | 'fast' | 'pro' | 'ultra' = 'liquid',
+    model: 'gas' | 'liquid' | 'solid' | 'liquid45' | 'liquid51' | 'fast' | 'pro' | 'ultra' = 'liquid',
     language: string = 'en',
     onChunk: (chunk: string) => void,
     onDone: (chatId: number, artifact?: any, msgId?: number) => void,
@@ -553,8 +553,9 @@ class APIService {
           body: JSON.stringify({
             message, chat_id: chatId, language, files, mode, agent_type: agentType, project_id: projectId ?? undefined,
             // Liquid 4.5 is a variant of the Liquid tier (same plan accounting)
-            model: model === 'liquid45' ? 'liquid' : model,
-            model_variant: model === 'liquid45' ? 'liquid45' : undefined,
+            // liquid 5.5 v1: earlier Liquid generations are variants of the Liquid tier (same plan accounting)
+            model: model === 'liquid45' || model === 'liquid51' ? 'liquid' : model,
+            model_variant: model === 'liquid45' || model === 'liquid51' ? model : undefined,
             ...userChatPrefs(),
           }),
           signal: controller.signal,

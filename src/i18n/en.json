@@ -911,5 +911,21 @@
   "effort.gas": "Gas answers instantly and has no effort levels. To think more, pick Liquid or Solid.",
   "proj.label": "Project",
   "proj.none": "No project",
-  "proj.pick": "Project"
+  "proj.pick": "Project",
+  "model.liquid51.tag": "Previous generation",
+  "model.liquid51.detail": "The previous Liquid: fast and balanced.",
+  "l55.upcoming": "Coming soon · October 12",
+  "l55.available": "Available now",
+  "l55.arrives": "Arrives October 12",
+  "l55.lede": "The most capable Liquid ever.",
+  "l55.desc": "Arriving October 12 on every plan, including free. More depth when you need it, with the speed of Liquid.",
+  "l55.desc.live": "Available on every plan, including free. More depth when you need it, with the speed of Liquid.",
+  "l55.legacy": "Liquid 5.1 remains available in More models.",
+  "l55.try": "Try Liquid 5.5",
+  "l55.read": "Read the news",
+  "pl.free.f1.l55": "Gas 4.5 and Liquid 5.5",
+  "pl.friend.f1.l55": "Gas 4.5, Liquid 5.5 and Solid 5",
+  "an.try.l55": "Try Liquid 5.5",
+  "st.news.desc.l55": "Liquid 5.5, Skills and the story of Deiza's models",
+  "st.chain.on.l55": "If a model does not answer, Deiza tries previous versions of the same family (Liquid 5.5 → Liquid 5.1). Solid never drops to Gas."
 }

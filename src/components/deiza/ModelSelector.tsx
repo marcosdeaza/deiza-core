@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, Lock, Check } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { solid5LaunchActive } from '@/lib/launch';
+import { solid5LaunchActive, liquid55Live, liquid55LaunchActive, useLiquid55Live } from '@/lib/launch';
 import { haptic } from '@/lib/native';
 
-export type ModelKey = 'gas' | 'liquid' | 'solid' | 'fast' | 'pro' | 'ultra';
+export type ModelKey = 'gas' | 'liquid' | 'solid' | 'liquid51' | 'fast' | 'pro' | 'ultra';
 /** deiza auto v1: how hard the model thinks (medium = Deiza decides per question) */
 export type Effort = 'low' | 'medium' | 'high' | 'max';
 export const EFFORTS: Effort[] = ['low', 'medium', 'high', 'max'];
@@ -35,13 +35,14 @@ interface ModelMeta {
 }
 
 /** Public model lineup — Gas 4.5 · Liquid 5.1 · Solid 5. */
-export const MODELS: ModelMeta[] = [
+export const getModels = (): ModelMeta[] => [
   {
     key: 'gas', family: 'gas', name: 'Gas', version: '4.5',
     plans: ['free', 'friend', 'signet'],
   },
   {
-    key: 'liquid', family: 'liquid', name: 'Liquid', version: '5.1',
+    key: 'liquid', family: 'liquid', name: 'Liquid', version: liquid55Live() ? '5.5' : '5.1',
+    isNew: liquid55Live(),
     plans: ['free', 'friend', 'signet'],
   },
   {
@@ -49,13 +50,14 @@ export const MODELS: ModelMeta[] = [
     plans: ['friend', 'signet'],
     isNew: true,
   },
+  ...(liquid55Live() ? [{ key: 'liquid51' as ModelKey, family: 'liquid' as Family, name: 'Liquid', version: '5.1', plans: ['free', 'friend', 'signet'], legacy: true }] : []),
 ];
 
 // Vainilla was retired; a saved choice of it now opens Gas
 const LEGACY_ALIASES: Record<string, ModelKey> = { fast: 'gas', pro: 'liquid', ultra: 'solid', vainilla: 'gas' };
 
 export const resolveModel = (m: ModelKey): ModelMeta =>
-  MODELS.find(x => x.key === (LEGACY_ALIASES[m] || m)) || MODELS[1];
+  getModels().find(x => x.key === (LEGACY_ALIASES[m] || m)) || getModels()[1];
 
 const FAMILY_DOT: Record<Family, string> = {
   gas: 'bg-amber-400/90',
@@ -90,7 +92,7 @@ const ModelRow = ({ m, selected, hasAccess, t, onSelect }: RowProps) => (
         <span className={`font-body text-[13px] font-semibold ${selected ? 'text-foreground' : 'text-foreground/85'}`}>
           {m.name} <span className="font-medium text-foreground/60">{m.version}</span>
         </span>
-        {m.isNew && solid5LaunchActive() && (
+        {m.isNew && (m.key === 'liquid' ? liquid55LaunchActive() : solid5LaunchActive()) && (
           <span className="font-body text-[9px] font-semibold uppercase tracking-[0.12em] text-primary/80 border border-primary/30 rounded-full px-1.5 py-[1px] leading-none">
             {t('model.new')}
           </span>
@@ -117,8 +119,28 @@ const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick
   const [open, setOpen] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const justOpenedRef = useRef(false);
   const { t } = useLanguage();
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const position = () => {
+      const menu = menuRef.current, anchor = containerRef.current;
+      if (!menu || !anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const desired = align === 'right' ? rect.right - menu.offsetWidth : rect.left;
+      const left = Math.max(12, Math.min(desired, window.innerWidth - menu.offsetWidth - 12));
+      menu.style.left = `${left - rect.left}px`;
+      menu.style.right = 'auto';
+      menu.style.maxHeight = `${Math.max(84, rect.top - 12)}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    if (containerRef.current) observer.observe(containerRef.current);
+    window.addEventListener('resize', position);
+    return () => { observer.disconnect(); window.removeEventListener('resize', position); };
+  }, [open, align]);
 
   useEffect(() => {
     if (!open) return;
@@ -140,6 +162,7 @@ const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick
     };
   }, [open]);
 
+  const live55 = useLiquid55Live();
   const current = resolveModel(model);
   useEffect(() => { if (current.legacy) setShowMore(true); }, [current.legacy]);
 
@@ -164,8 +187,8 @@ const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick
     setOpen(v => !v);
   };
 
-  const primary = MODELS.filter(m => !m.legacy);
-  const more = MODELS.filter(m => m.legacy);
+  const primary = getModels().filter(m => !m.legacy);
+  const more = getModels().filter(m => m.legacy);
 
   return (
     <div ref={containerRef} className="relative shrink-0">
@@ -194,8 +217,9 @@ const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick
       <AnimatePresence>
         {open && (
           <motion.div
+            ref={menuRef}
             role="listbox"
-            className={`absolute bottom-full mb-2 ${align === 'right' ? 'right-0 origin-bottom-right' : 'left-0 origin-bottom-left'} z-50 w-[min(320px,calc(100vw-1.5rem))] bg-card border border-border/40 deiza-shadow-lg rounded-2xl p-1.5`}
+            className={`absolute bottom-full mb-2 ${align === 'right' ? 'right-0 origin-bottom-right' : 'left-0 origin-bottom-left'} z-50 w-[min(320px,calc(100vw-1.5rem))] overflow-y-auto bg-card border border-border/40 deiza-shadow-lg rounded-2xl p-1.5`}
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0, transition: { duration: 0.12, ease: 'easeOut' } }}
             exit={{ opacity: 0, transition: { duration: 0.08, ease: 'easeIn' } }}
@@ -204,7 +228,15 @@ const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick
               {t('model.label')}
             </div>
             {primary.map((m, i) => (
-              <ModelRow key={m.key} m={m} index={i} selected={m.key === current.key} hasAccess={m.plans.includes(userPlan)} t={t} onSelect={handleSelect} />
+              <div key={m.key}>
+                <ModelRow m={m} index={i} selected={m.key === current.key} hasAccess={m.plans.includes(userPlan)} t={t} onSelect={handleSelect} />
+                {m.key === 'liquid' && !live55 && (
+                  <div aria-disabled="true" className="flex gap-3 px-3 py-2.5 rounded-xl opacity-60 text-muted-foreground">
+                    <span className="mt-[7px] w-1.5 h-1.5 rounded-full bg-primary/40 shrink-0" aria-hidden="true" />
+                    <p className="font-body text-[12px] leading-snug">Liquid 5.5 · {t('l55.arrives')}</p>
+                  </div>
+                )}
+              </div>
             ))}
 
             {onEffortChange && (

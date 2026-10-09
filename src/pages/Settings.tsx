@@ -1,3 +1,4 @@
+import { liquidName } from '@/lib/launch';
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
@@ -654,7 +655,7 @@ const Settings = () => {
                 icon={<Info className="w-4.5 h-4.5 text-muted-foreground" />}
                 iconBg="bg-muted/50"
                 label="Deiza"
-                sublabel={`${t('st.version')} 5.5 · Liquid 5.1${native ? ' · iOS' : ''}`}
+                sublabel={`${t('st.version')} 5.5 · ${liquidName()}${native ? ' · iOS' : ''}`}
               />
             </Section>
           </div>

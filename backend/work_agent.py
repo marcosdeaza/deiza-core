@@ -480,6 +480,9 @@ def _label(lang, name, args):
 def _stream_round(engine, msgs, tools, usage_add):
     """Yields ('reason', str) / ('text', str) while the model works and finally ('done', dict)."""
     import requests
+    from conversation_context import fit_messages
+    window = 1048576 if engine.get('name') in ('Solid 5', 'Liquid 5.5') else 262144
+    msgs = fit_messages(msgs, window - 32000 - 8000)
     body = {'model': engine['model'], 'messages': msgs, 'max_tokens': 24000, 'stream': True,
             'stream_options': {'include_usage': True}, 'tools': tools}
     if engine.get('effort'):
@@ -502,8 +505,16 @@ def _stream_round(engine, msgs, tools, usage_add):
         log.warning('work engine HTTP %s (%s): %s', code, attempt + 1, err)
         if code in (400, 401, 403, 404):
             raise RuntimeError(f'engine HTTP {code}: {err[:160]}')
+        if code == 429 and engine.get('fallback'):
+            break
         time.sleep(2.0 * (attempt + 1) + (6 if code == 429 else 0))
     if resp is None:
+        fb = engine.pop('fallback', None)  # liquid 5.5 v1: saturated engine -> its fallback for the rest of the job
+        if fb:
+            log.warning('work engine %s unavailable, switching to %s', engine.get('model'), fb.get('model'))
+            engine.update({k: v for k, v in fb.items() if k != 'effort'})
+            yield from _stream_round(engine, msgs, tools, usage_add)
+            return
         raise RuntimeError('engine unavailable')
     resp.encoding = 'utf-8'
     calls, text, reasoning, finish, rfield = {}, '', '', None, 'reasoning'
@@ -569,19 +580,19 @@ def _prune_images(msgs):
 
 def stream(message, history=None, model='pro', language='es', files=None, user_id=None, chat_id=None,
            usage_sink=None, project_context=None, memory_context=None, custom_instructions=None,
-           skills_context=None, effort=None, **_):
+           skills_context=None, effort=None, variant=None, **_):
     import ai_service
     prev = getattr(ai_service._USAGE_TLS, 'sink', None)
     ai_service._USAGE_TLS.sink = usage_sink
     try:
         yield from _run(message, history, model, language, files, user_id, chat_id, project_context,
-                        memory_context, custom_instructions, skills_context, effort)
+                        memory_context, custom_instructions, skills_context, effort, variant)
     finally:
         ai_service._USAGE_TLS.sink = prev
 
 
 def _run(message, history, model, language, files, user_id, chat_id, project_context, memory_context,
-         custom_instructions, skills_context, effort=None):
+         custom_instructions, skills_context, effort=None, variant=None):
     import ai_service
     import prompt_v2
     from conversation_context import fit_messages
@@ -596,7 +607,7 @@ def _run(message, history, model, language, files, user_id, chat_id, project_con
     # System prompt: the chat's v2 layers (identity, method, format, deliverable spec) + the Work layer.
     h_text, _ = prompt_v2.history_info(history)
     base = prompt_v2.build_base_prompt(svc.system_prompts.get(lang, svc.system_prompts['en']), language, model_key,
-                                       None, message or '', h_text, bool(files), True) \
+                                       variant, message or '', h_text, bool(files), True) \
         or svc.system_prompts.get(lang, svc.system_prompts['en'])
     system = base + '\n\n' + WORK_PROMPT[lang]
     if _DECK_RE.search(message or '') or _DECK_RE.search(h_text[-1500:] if h_text else ''):
@@ -673,7 +684,7 @@ def _run(message, history, model, language, files, user_id, chat_id, project_con
                                    'deliver it with DELIVER: name.pptx]\n')) + prev_deck[:60000]
     msgs.append({'role': 'user', 'content': user_parts if len(user_parts) > 1 else user_parts[0]['text']})
 
-    engine = dict(svc._chat_engine(model_key, [{}, {}, {}], message or '', files, 'agent') or {})
+    engine = dict(svc._chat_engine(model_key, [{}, {}, {}], message or '', files, 'agent', variant) or {})
     if not engine:
         raise RuntimeError('No cloud engine configured')
     # deiza auto v1: the user's effort; max also gets more rounds
@@ -681,7 +692,7 @@ def _run(message, history, model, language, files, user_id, chat_id, project_con
     max_rounds = MAX_ROUNDS + (20 if effort == 'max' else 0)
     usage_add = ai_service._usage_add_openai
     tools = _tools()
-    window = 1048576 if model_key == 'solid' else 262144
+    window = 1048576 if engine.get('name') in ('Solid 5', 'Liquid 5.5') else 262144
     t0 = time.time()
     step_n = 0
     state = {}
@@ -702,6 +713,7 @@ def _run(message, history, model, language, files, user_id, chat_id, project_con
                             'I reached the time limit for this job. Tell me if I should continue from here.'))
             return
         _prune_images(msgs)
+        window = 1048576 if engine.get('name') in ('Solid 5', 'Liquid 5.5') else 262144
         msgs = fit_messages(msgs, window - 32000 - 8000)
         buf, flushed, last_beat, done = '', False, time.time(), None
         pend, deliver_name = '', None

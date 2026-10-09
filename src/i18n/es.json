@@ -911,5 +911,21 @@
   "effort.gas": "Gas responde al momento y no tiene niveles de esfuerzo. Para pensar más, elige Liquid o Solid.",
   "proj.label": "Proyecto",
   "proj.none": "Sin proyecto",
-  "proj.pick": "Proyecto"
+  "proj.pick": "Proyecto",
+  "model.liquid51.tag": "Generación anterior",
+  "model.liquid51.detail": "El Liquid de antes: rápido y equilibrado.",
+  "l55.upcoming": "Próximamente · 12 de octubre",
+  "l55.available": "Ya disponible",
+  "l55.arrives": "Llega el 12 de octubre",
+  "l55.lede": "El Liquid más capaz de todos los tiempos.",
+  "l55.desc": "Llega el 12 de octubre a todos los planes, también al gratuito. Más profundidad cuando la necesitas, con la rapidez de Liquid.",
+  "l55.desc.live": "Disponible en todos los planes, también en el gratuito. Más profundidad cuando la necesitas, con la rapidez de Liquid.",
+  "l55.legacy": "Liquid 5.1 seguirá disponible en Más modelos.",
+  "l55.try": "Probar Liquid 5.5",
+  "l55.read": "Leer la noticia",
+  "pl.free.f1.l55": "Gas 4.5 y Liquid 5.5",
+  "pl.friend.f1.l55": "Gas 4.5, Liquid 5.5 y Solid 5",
+  "an.try.l55": "Probar Liquid 5.5",
+  "st.news.desc.l55": "Liquid 5.5, Skills y la historia de los modelos de Deiza",
+  "st.chain.on.l55": "Si un modelo no responde, Deiza prueba con versiones anteriores de la misma familia (Liquid 5.5 → Liquid 5.1). Solid nunca baja a Gas."
 }

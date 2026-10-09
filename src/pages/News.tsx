@@ -6,7 +6,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import AmbientRose from '@/components/deiza/AmbientRose';
 import logo from '@/assets/logo.webp';
 import { NEWS, type NewsArt } from '@/data/news';
-import { solid5LaunchActive } from '@/lib/launch';
+import { useLiquid55Live } from '@/lib/launch';
 import {
   SketchDrop, SketchRose, SketchLayers, SketchCode, SketchImage, SketchSearch, SketchEye, SketchLink, SketchChat,
 } from '@/components/deiza/Sketch';
@@ -25,6 +25,7 @@ const fmtDate = (iso: string, lang: string) => {
 
 /** /noticias — Deiza's announcements, editorial and hand-drawn. */
 const News = () => {
+  const live55 = useLiquid55Live();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const { language, t } = useLanguage();
@@ -35,8 +36,8 @@ const News = () => {
   // A modal elsewhere may have left body overflow locked — this page must scroll.
   useEffect(() => { document.body.style.overflow = ''; window.scrollTo(0, 0); }, []);
 
-  const items = useMemo(() => [...NEWS].sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : Number(!!a.upcoming) - Number(!!b.upcoming))), []);
-  const featured = items.find(n => n.id === 'solid-5') || items[0];
+  const items = useMemo(() => [...NEWS].sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : Number(!!a.upcoming) - Number(!!b.upcoming))), [live55]);
+  const featured = items.find(n => n.id === 'liquid55') || items[0];
 
   return (
     <div className="min-h-dvh bg-background">
@@ -73,9 +74,7 @@ const News = () => {
               : 'Models, architecture and product decisions from the first DZ-4F to Solid 5.'}
           </p>
           <div className="mt-8 rounded-[28px] overflow-hidden border border-border/30 deiza-shadow-lg bg-card">
-            {solid5LaunchActive()
-              ? <img src="/art/solid5-mural.webp" alt="" className="w-full aspect-[21/9] object-cover" loading="eager" />
-              : <img src="/art/news-hero.webp" alt="" className="w-full aspect-[16/9] object-cover" loading="eager" />}
+            <img src="/art/liquid55-mural.webp" alt="" className="w-full aspect-[21/9] object-cover" loading="eager" />
           </div>
         </motion.section>
 
@@ -150,6 +149,11 @@ const News = () => {
                                 </Fragment>
                               ))}
                             </div>
+                            {n.id === 'liquid55' && live55 && (
+                              <button onClick={() => navigate('/workspace?model=liquid')} className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-primary-foreground font-body text-sm font-medium hover:brightness-110 transition focus-ring">
+                                {t('l55.try')}
+                              </button>
+                            )}
                             {n.id === 'solid-5' && (
                               <button
                                 onClick={() => navigate('/workspace?model=solid')}

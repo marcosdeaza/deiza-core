@@ -675,5 +675,21 @@
  "aud.input.change": "Audioeingang ändern",
  "aud.input.mic": "Mikrofon {n}",
  "aud.input.set": "Audioeingang: {name}",
- "aud.input.hint": "Rechtsklick oder lange drücken, um das Mikrofon zu wählen"
+ "aud.input.hint": "Rechtsklick oder lange drücken, um das Mikrofon zu wählen",
+  "l55.upcoming": "Demnächst · 12. Oktober",
+  "l55.available": "Jetzt verfügbar",
+  "l55.arrives": "Ab 12. Oktober",
+  "l55.lede": "Der leistungsfähigste Liquid aller Zeiten.",
+  "l55.desc": "Ab 12. Oktober in allen Tarifen, auch kostenlos. Mehr Tiefe, wenn nötig, mit der Geschwindigkeit von Liquid.",
+  "l55.desc.live": "In allen Tarifen verfügbar, auch kostenlos. Mehr Tiefe, wenn nötig, mit der Geschwindigkeit von Liquid.",
+  "l55.legacy": "Liquid 5.1 bleibt unter Weitere Modelle verfügbar.",
+  "l55.try": "Liquid 5.5 ausprobieren",
+  "l55.read": "Neuigkeit lesen",
+  "model.liquid51.tag": "Vorherige Generation",
+  "model.liquid51.detail": "Der bisherige Liquid: schnell und ausgewogen.",
+  "pl.free.f1.l55": "Gas 4.5 und Liquid 5.5",
+  "pl.friend.f1.l55": "Gas 4.5, Liquid 5.5 und Solid 5",
+  "an.try.l55": "Liquid 5.5 ausprobieren",
+  "st.news.desc.l55": "Liquid 5.5, Skills und die Geschichte der Deiza-Modelle",
+  "st.chain.on.l55": "Wenn ein Modell nicht antwortet, probiert Deiza frühere Versionen derselben Familie (Liquid 5.5 → Liquid 5.1). Solid fällt nie auf Gas zurück."
 }

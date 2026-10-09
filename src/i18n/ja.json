@@ -675,5 +675,21 @@
  "aud.input.change": "音声入力を変更",
  "aud.input.mic": "マイク {n}",
  "aud.input.set": "音声入力: {name}",
- "aud.input.hint": "右クリックまたは長押しでマイクを選択"
+ "aud.input.hint": "右クリックまたは長押しでマイクを選択",
+  "l55.upcoming": "近日公開 · 10月12日",
+  "l55.available": "公開されました",
+  "l55.arrives": "10月12日公開",
+  "l55.lede": "史上最も高性能なLiquid。",
+  "l55.desc": "10月12日から無料を含むすべてのプランで利用できます。必要なときに深く考え、Liquidの速さを保ちます。",
+  "l55.desc.live": "無料を含むすべてのプランで利用できます。必要なときに深く考え、Liquidの速さを保ちます。",
+  "l55.legacy": "Liquid 5.1は「その他のモデル」で引き続き利用できます。",
+  "l55.try": "Liquid 5.5を試す",
+  "l55.read": "ニュースを読む",
+  "model.liquid51.tag": "前世代",
+  "model.liquid51.detail": "これまでのLiquid：高速でバランスの良いモデル。",
+  "pl.free.f1.l55": "Gas 4.5 と Liquid 5.5",
+  "pl.friend.f1.l55": "Gas 4.5、Liquid 5.5、Solid 5",
+  "an.try.l55": "Liquid 5.5 を試す",
+  "st.news.desc.l55": "Liquid 5.5、スキル、Deiza モデルの歩み",
+  "st.chain.on.l55": "モデルが応答しない場合、Deiza は同じ系統の以前のバージョンを試します（Liquid 5.5 → Liquid 5.1）。Solid が Gas に下がることはありません。"
 }

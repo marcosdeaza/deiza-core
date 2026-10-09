@@ -1378,7 +1378,7 @@ def send_message_stream():
                                           files=files_data, user_id=user_id, chat_id=new_chat_id,
                                           project_context=project_context, memory_context=_stream_memory_ctx,
                                           custom_instructions=custom_instructions, skills_context=_skills_ctx,
-                                          usage_sink=_usage_acc, effort=effort)
+                                          usage_sink=_usage_acc, effort=effort, variant=model_variant)
             else:
               _gen = ai_service.stream_message(message=message, history=prior_history, model=model, language=language,
                                              files=files_data, mode=mode, agent_type=agent_type,

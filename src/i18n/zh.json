@@ -675,5 +675,21 @@
  "aud.input.change": "更改音频输入",
  "aud.input.mic": "麦克风 {n}",
  "aud.input.set": "音频输入：{name}",
- "aud.input.hint": "右键或长按以选择麦克风"
+ "aud.input.hint": "右键或长按以选择麦克风",
+  "l55.upcoming": "即将推出 · 10月12日",
+  "l55.available": "现已推出",
+  "l55.arrives": "10月12日推出",
+  "l55.lede": "有史以来能力最强的 Liquid。",
+  "l55.desc": "10月12日起面向所有套餐，包括免费套餐。需要时深入思考，同时保持 Liquid 的速度。",
+  "l55.desc.live": "面向所有套餐，包括免费套餐。需要时深入思考，同时保持 Liquid 的速度。",
+  "l55.legacy": "Liquid 5.1 将继续在“更多模型”中提供。",
+  "l55.try": "试用 Liquid 5.5",
+  "l55.read": "阅读新闻",
+  "model.liquid51.tag": "上一代",
+  "model.liquid51.detail": "上一代 Liquid：快速而均衡。",
+  "pl.free.f1.l55": "Gas 4.5 和 Liquid 5.5",
+  "pl.friend.f1.l55": "Gas 4.5、Liquid 5.5 和 Solid 5",
+  "an.try.l55": "试用 Liquid 5.5",
+  "st.news.desc.l55": "Liquid 5.5、Skills 以及 Deiza 模型的故事",
+  "st.chain.on.l55": "如果某个模型没有响应，Deiza 会尝试同系列的上一代版本（Liquid 5.5 → Liquid 5.1）。Solid 绝不会降级到 Gas。"
 }

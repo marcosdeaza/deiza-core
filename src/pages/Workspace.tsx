@@ -35,7 +35,8 @@ import ActionSheet from '@/components/deiza/ActionSheet';
 import ConfirmDialog from '@/components/deiza/ConfirmDialog';
 import SidebarContent from '@/components/deiza/SidebarContent';
 import AnnouncementModal, { announcementSeen, markAnnouncementSeen } from '@/components/deiza/AnnouncementModal';
-import Solid5Modal, { solid5Seen, markSolid5Seen } from '@/components/deiza/Solid5Modal';
+import Liquid55Modal, { liquid55Seen, markLiquid55Seen } from '@/components/deiza/Liquid55Modal';
+import { liquidName, useLiquid55Live } from '@/lib/launch';
 import CapuSprite from '@/components/deiza/CapuSprite';
 import { desktopBridge, isDesktopApp } from '@/lib/desktop';
 import { type ModelKey } from '@/components/deiza/ModelSelector';
@@ -385,26 +386,27 @@ const Workspace = () => {
   }, [userPlan, navigate, t]);
 
   // One-time launch note for Solid 5. It goes first; the desktop note waits for a later visit.
-  const [solid5Open, setSolid5Open] = useState(false);
-  const solid5ShownRef = useRef(false);
+  const live55 = useLiquid55Live();
+  const [liquid55Open, setLiquid55Open] = useState(false);
+  const liquid55ShownRef = useRef(false);
   useEffect(() => {
     if (!isAuthenticated || !user?.id) return;
-    if (solid5Seen(user.id)) return;
-    solid5ShownRef.current = true;
-    const id = setTimeout(() => setSolid5Open(true), 900);
+    if (liquid55Seen(user.id)) return;
+    liquid55ShownRef.current = true;
+    const id = setTimeout(() => setLiquid55Open(true), 900);
     return () => clearTimeout(id);
-  }, [isAuthenticated, user?.id]);
-  const closeSolid5 = useCallback(() => { markSolid5Seen(user?.id); setSolid5Open(false); }, [user?.id]);
+  }, [isAuthenticated, user?.id, live55]);
+  const closeLiquid55 = useCallback(() => { markLiquid55Seen(user?.id); setLiquid55Open(false); }, [user?.id]);
 
   // One-time launch note (Deiza for desktop) for accounts opening the workspace after the release
   const [announceOpen, setAnnounceOpen] = useState(false);
   useEffect(() => {
     if (!isAuthenticated || !user?.id) return;
-    if (solid5ShownRef.current || !solid5Seen(user.id)) return;
+    if (liquid55ShownRef.current || !liquid55Seen(user.id)) return;
     if (announcementSeen(user.id)) return;
     const id = setTimeout(() => setAnnounceOpen(true), 900);
     return () => clearTimeout(id);
-  }, [isAuthenticated, user?.id]);
+  }, [isAuthenticated, user?.id, live55]);
   const closeAnnouncement = useCallback(() => { markAnnouncementSeen(user?.id); setAnnounceOpen(false); }, [user?.id]);
 
   // Floating announcement toast for Deiza Code
@@ -1239,7 +1241,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
         const tierLabel = model === 'ultra' || model === 'solid' ? 'Ultra' : (model === 'pro' || model === 'liquid' ? 'Pro' : 'Fast');
         let errMsg: string | null = null;
         if (errKey === 'model_sublimit') {
-          const subName = modelRaw === 'ultra' || modelRaw === 'solid' ? 'Solid 5' : modelRaw === 'pro' || modelRaw === 'liquid' ? 'Liquid 5.1'
+          const subName = modelRaw === 'ultra' || modelRaw === 'solid' ? 'Solid 5' : modelRaw === 'liquid51' ? 'Liquid 5.1' : modelRaw === 'pro' || modelRaw === 'liquid' ? liquidName()
             : modelRaw === 'design' || modelRaw === 'image' ? 'DZ Image' : modelRaw === 'code' ? 'Deiza Code' : 'Gas 4.5';
           errMsg = t('ws.err.sublimit', { model: subName, plan: userPlan, time: fmtLeft(secsLeft) });
         } else if (errKey === 'usage_limit' || err?.includes('429')) {
@@ -1549,7 +1551,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
       setCurrentChatId(chatId);
       // Restore the model that was last used in this chat
       const savedModel = localStorage.getItem(`deiza_model_${chatId}`) as ModelKey | null;
-      if (savedModel && ['gas', 'liquid', 'solid'].includes(savedModel)) {
+      if (savedModel && ['gas', 'liquid', 'solid', 'liquid51'].includes(savedModel)) {
         setModelState(savedModel);
       }
       setActiveProjectId(chats.find(c => c.id === chatId)?.project_id ?? null);
@@ -1986,15 +1988,14 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     <div className="h-[100dvh] w-full flex bg-background relative overflow-hidden">
       <AmbientRose />
       <NameSetupDialog open={showNameDialog} onClose={handleNameDialogClose} />
-      <Solid5Modal
-        open={solid5Open && !showNameDialog}
-        onClose={closeSolid5}
+      <Liquid55Modal
+        open={liquid55Open && !showNameDialog}
+        onClose={closeLiquid55}
         onTry={() => {
-          closeSolid5();
-          if (userPlan === 'free') navigate('/plans');
-          else setModel('solid');
+          closeLiquid55();
+          setModel('liquid');
         }}
-        onReadMore={() => { closeSolid5(); navigate('/noticias?post=solid-5'); }}
+        onReadMore={() => { closeLiquid55(); navigate('/noticias?post=liquid55'); }}
       />
       <AnnouncementModal
         open={announceOpen && !showNameDialog}
@@ -2005,7 +2006,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
 
       {/* Floating Announcement Toast for Deiza Code */}
       <AnimatePresence>
-        {codeBannerOpen && !announceOpen && !solid5Open && !showNameDialog && !inDesktopApp && (
+        {codeBannerOpen && !announceOpen && !liquid55Open && !showNameDialog && !inDesktopApp && (
           <motion.div
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}

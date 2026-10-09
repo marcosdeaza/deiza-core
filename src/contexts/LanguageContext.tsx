@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react';
 import es from '@/i18n/es.json';
+import { useLiquid55Live } from '@/lib/launch';
 import en from '@/i18n/en.json';
 
 export type Language = 'es' | 'en' | 'zh' | 'hi' | 'ar' | 'pt' | 'ru' | 'ja' | 'de' | 'fr' | 'ko' | 'it';
@@ -95,6 +96,7 @@ function applyDocumentLanguage(lang: Language) {
 }
 
 export const LanguageProvider = ({ children }: { children: ReactNode }) => {
+  const live55 = useLiquid55Live();
   const [language, setLanguageState] = useState<Language>(() => detectLanguage());
   const [, force] = useState(0);
   const [loading, setLoading] = useState(() => !cache[language]);
@@ -124,6 +126,7 @@ export const LanguageProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const t = useCallback((key: string, params?: Record<string, string | number>): string => {
+    if (live55 && ['pl.free.f1', 'pl.friend.f1', 'an.try', 'st.news.desc', 'st.chain.on'].includes(key)) key += '.l55';
     const dict = cache[language];
     let value = (dict && dict[key]) ?? (en as Dict)[key] ?? (es as Dict)[key] ?? key;
     if (params) {
@@ -132,7 +135,7 @@ export const LanguageProvider = ({ children }: { children: ReactNode }) => {
     return value;
     // `loading` is intentionally a dependency: once the dictionary lands every consumer re-renders
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language, loading]);
+  }, [language, loading, live55]);
 
   const info = useMemo(() => languageInfo(language), [language]);
   const value = useMemo(() => ({ language, info, loading, setLanguage, t }), [language, info, loading, setLanguage, t]);
