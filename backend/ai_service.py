@@ -533,6 +533,10 @@ LANGUAGE_NAMES = {
 }
 
 
+def _chat_gas_model() -> str:
+    return (os.getenv('CHAT_MODEL_GAS') or os.getenv('CODE_MODEL_GAS') or '').strip()
+
+
 def _prompt_v2_reasoning(message, files) -> bool:
     """# prompt v2 hook: Gas reasons at medium effort when the turn is a problem to solve."""
     try:
@@ -3106,7 +3110,8 @@ GENERATION RULES:
                         'model': os.getenv('CODE_MODEL_GAS_VISION', ''),
                         'effort': None, 'vision': True, 'read_timeout': 60}
             return {'name': 'Gas 4.5', 'url': engine_url, 'key': engine_key,
-                    'model': os.getenv('CODE_MODEL_GAS', 'openai.the fast model'),
+                    # the chat can run Gas on its own engine (CHAT_MODEL_GAS); Deiza Code keeps CODE_MODEL_GAS
+                    'model': _chat_gas_model(),
                     # reasoning_effort only when the fast engine accepts it (CODE_GAS_EFFORT=0 turns it off)
                     'effort': (('medium' if _prompt_v2_reasoning(message, files) else 'low')
                                if os.getenv('CODE_GAS_EFFORT', '1') == '1' else None),

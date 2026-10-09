@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 
 API_PORT = int(os.getenv('WORK_BROWSER_PORT', '5077'))
 PROXY_PORT = int(os.getenv('WORK_PROXY_PORT', '5078'))
-MAX_SESSIONS = int(os.getenv('WORK_BROWSER_SESSIONS', '3'))
+MAX_SESSIONS = int(os.getenv('WORK_BROWSER_SESSIONS', '4'))
 IDLE_SESSION = 600        # seconds before an unused session is closed
 IDLE_BROWSER = 900        # seconds without sessions before Chromium itself is closed
 VIEW_W, VIEW_H = 1280, 800
