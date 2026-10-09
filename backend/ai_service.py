@@ -3437,13 +3437,13 @@ GENERATION RULES:
         system_prompt += ('\n\n---\nREGLA DE PREGUNTAS: si necesitas datos del usuario antes de crear algo, no escribas '
                           'una lista de preguntas en prosa. Escribe una frase de contexto y termina con el bloque '
                           '```question\n{"questions":[{"q":"...","options":["...","..."]}]}\n``` (maximo 3 preguntas, '
-                          '2-5 opciones cada una). La interfaz lo convierte en botones. Si puedes asumir algo razonable, '
+                          '2-5 opciones cada una). La interfaz lo convierte en botones. Si puedes asumir algo razonable o dejar un dato [entre corchetes], '
                           'no preguntes: hazlo.'
                           if language == 'es' else
                           '\n\n---\nQUESTION RULE: if you need details from the user before creating something, do not write '
                           'a prose list of questions. Write one sentence of context and end with the block '
                           '```question\n{"questions":[{"q":"...","options":["...","..."]}]}\n``` (max 3 questions, 2-5 '
-                          'options each). The interface turns it into buttons. If you can assume something reasonable, '
+                          'options each). The interface turns it into buttons. If you can assume something reasonable or leave a [bracketed] placeholder, '
                           'do not ask: do it.')
 
         contents = _history_contents(history, current_message=message)

@@ -1463,8 +1463,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
   const switchWorkspaceMode = (next: boolean) => {
     if (next === workMode) return;
     haptic('selection');
-    if (messages.length > 0 || currentChatId) handleNewChat();
-    setWorkMode(next);
+    setWorkMode(next);  // work chip v1: stays in the current conversation
     // Work reads screenshots and photos: it runs on Liquid or Solid (the backend upgrades Gas anyway)
     if (next && model === 'gas') setModel('liquid');
   };
@@ -1936,6 +1935,8 @@ const artifactMarker = latestRaw.indexOf('```artifact');
             onUpgradeClick={() => navigate('/plans')}
             variant={isEmpty ? 'hero' : 'dock'}
             placeholder={workMode ? t('ws.work.placeholder') : undefined}  // work polish v1
+            workMode={workMode}
+            onWorkToggle={isAuthenticated && !isDemoMode ? () => switchWorkspaceMode(!workMode) : undefined}
           />
         </motion.div>
 
@@ -2209,23 +2210,8 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                   )}
                   <button onClick={handleLogoClick} className="flex items-center gap-2 hover:opacity-70 transition-opacity focus-ring rounded-lg shrink-0" aria-label={isDemoMode ? t('ws.home') : t('ws.newchat')}>
                     <img src={logo} alt="" className="w-10 h-10 sm:w-12 sm:h-12 blend-multiply" aria-hidden="true" />
-                    <span className={`font-display text-[22px] sm:text-[26px] tracking-tight text-foreground ${isAuthenticated && !isDemoMode ? 'hidden min-[440px]:inline' : ''}`}>Deiza</span>
+                    <span className="font-display text-[22px] sm:text-[26px] tracking-tight text-foreground">Deiza</span>
                   </button>
-                  {isAuthenticated && !isDemoMode && (
-                    <div className="ml-0.5 sm:ml-2 flex items-center p-0.5 rounded-full bg-muted/45 border border-border/25 shrink-0" role="tablist" aria-label={t('ws.mode.label')}>
-                      {([false, true] as const).map(w => (
-                        <button
-                          key={String(w)}
-                          role="tab"
-                          aria-selected={workMode === w}
-                          onClick={() => switchWorkspaceMode(w)}
-                          className={`px-2.5 sm:px-3 py-1 rounded-full font-body text-[12px] leading-4 transition-colors focus-ring ${workMode === w ? 'bg-card text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.25)]' : 'text-muted-foreground hover:text-foreground'}`}
-                        >
-                          {w ? t('ws.mode.work') : t('ws.mode.chat')}
-                        </button>
-                      ))}
-                    </div>
-                  )}
                   {/* Active project chip */}
                   {activeProjectId && !sidePanel && (() => {
                     const p = projects.find(x => x.id === activeProjectId);

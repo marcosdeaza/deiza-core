@@ -64,7 +64,11 @@ body { font-family: var(--font-body, Georgia, serif); color: var(--ink, #1b1b1f)
 .slide > .split-img { position: absolute; top: 0; right: 0; width: 44%; height: 100%; object-fit: cover; }
 .slide > .split-img.left { right: auto; left: 0; }
 .slide > .full-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.slide > .overlay { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(8,8,10,.10) 0%, rgba(8,8,10,.40) 45%, rgba(8,8,10,.82) 100%); }
+/* logo slot: crest or brand mark in a corner, above pictures and scrims */
+.slide > .logo { position: absolute; top: 4.5%; right: 3.2%; height: 9%; width: auto; max-width: 18%; object-fit: contain; z-index: 6; }
+.slide > .logo.left { right: auto; left: 3.2%; }
+.slide > .logo.bottom { top: auto; bottom: 5%; }
+.slide > .overlay { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(8,8,10,.30) 0%, rgba(8,8,10,.58) 45%, rgba(8,8,10,.88) 100%);  /* text must read on busy photos */ }
 .slide > .bar { position: absolute; top: 0; right: 44%; width: 10px; height: 100%; background: var(--accent); }
 .slide > .bar.left { right: auto; left: 44%; }
 /* text never sits under a split picture */

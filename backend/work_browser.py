@@ -28,7 +28,7 @@ from urllib.parse import urlsplit
 API_PORT = int(os.getenv('WORK_BROWSER_PORT', '5077'))
 PROXY_PORT = int(os.getenv('WORK_PROXY_PORT', '5078'))
 MAX_SESSIONS = int(os.getenv('WORK_BROWSER_SESSIONS', '4'))
-IDLE_SESSION = 600        # seconds before an unused session is closed
+IDLE_SESSION = 1800       # seconds before an unused session is closed (time to sign in and ask)
 IDLE_BROWSER = 900        # seconds without sessions before Chromium itself is closed
 VIEW_W, VIEW_H = 1280, 800
 ALLOWED_PORTS = {80, 443, 8080, 8443}
@@ -252,6 +252,33 @@ class BrowserOwner(threading.Thread):
             pass
         page.wait_for_timeout(ms)
 
+    ELEMENTS_JS = """() => {
+        const sel = 'a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=option],[role=checkbox],[onclick]';
+        const out = [];
+        for (const el of document.querySelectorAll(sel)) {
+            const r = el.getBoundingClientRect();
+            if (r.width < 4 || r.height < 4 || r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) continue;
+            const cs = getComputedStyle(el);
+            if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0) continue;
+            const label = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') ||
+                           el.getAttribute('placeholder') || el.getAttribute('alt') || el.name || '').trim().replace(/\\s+/g, ' ').slice(0, 60);
+            if (!label && !/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) continue;
+            out.push({t: el.tagName.toLowerCase() + (el.type ? ':' + el.type : ''), l: label,
+                      x: Math.round(Math.max(0, r.left) + Math.min(r.width, innerWidth) / 2), y: Math.round(Math.max(0, r.top) + Math.min(r.height, innerHeight) / 2)});
+            if (out.length >= 60) break;
+        }
+        // boards and canvases (chess, maps, editors): their exact box, so squares can be computed
+        let areas = 0;
+        for (const el of document.querySelectorAll('cg-board, canvas, [class*="board"], [class*="Board"], svg')) {
+            const r = el.getBoundingClientRect();
+            if (r.width < 200 || r.height < 200 || r.bottom < 0 || r.top > innerHeight) continue;
+            out.push({t: 'area', l: (el.tagName.toLowerCase() + ' ' + (el.getAttribute('class') || '')).trim().slice(0, 40),
+                      x0: Math.round(r.left), y0: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height)});
+            if (++areas >= 3) break;
+        }
+        return out;
+    }"""  # browser elements v3
+
     @staticmethod
     def _state(page, shot=True):
         out = {'url': page.url, 'title': ''}
@@ -259,6 +286,10 @@ class BrowserOwner(threading.Thread):
             out['title'] = page.title()[:200]
         except Exception:
             pass
+        try:
+            out['elements'] = page.evaluate(BrowserOwner.ELEMENTS_JS)
+        except Exception:
+            out['elements'] = []
         if shot:
             img = page.screenshot(type='jpeg', quality=62)
             out['shot'] = base64.b64encode(img).decode()
@@ -306,6 +337,41 @@ class BrowserOwner(threading.Thread):
                 self._settle(page, 1200)
             else:
                 page.wait_for_timeout(250)
+        elif action == 'click_text':
+            text = str(a.get('text') or '').strip()[:120]
+            if not text:
+                raise ValueError('text is required')
+            target = None
+            for loc in (page.get_by_role('button', name=text), page.get_by_role('link', name=text),
+                        page.get_by_role('tab', name=text), page.get_by_role('menuitem', name=text),
+                        page.get_by_text(text, exact=True), page.get_by_text(text)):
+                try:
+                    n = loc.count()
+                except Exception:
+                    n = 0
+                for i in range(min(n, 8)):
+                    cand = loc.nth(i)
+                    try:
+                        if cand.is_visible():
+                            target = cand
+                            break
+                    except Exception:
+                        continue
+                if target is not None:
+                    break
+            if target is None:
+                raise ValueError(f'no visible element with text {text!r}')
+            target.click(timeout=8000)
+            self._settle(page)
+        elif action == 'drag':
+            x1, y1, x2, y2 = (float(a.get(k, 0)) for k in ('x1', 'y1', 'x2', 'y2'))
+            if not all(0 <= v <= VIEW_W for v in (x1, x2)) or not all(0 <= v <= VIEW_H for v in (y1, y2)):
+                raise ValueError('drag outside the page')
+            page.mouse.move(x1, y1)
+            page.mouse.down()
+            page.mouse.move(x2, y2, steps=14)
+            page.mouse.up()
+            self._settle(page, 500)
         elif action == 'key':
             key = str(a.get('key') or '')
             if key not in KEYS:

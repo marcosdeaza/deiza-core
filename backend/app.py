@@ -776,6 +776,10 @@ def send_message_stream():
             chat = Chat(user_id=user_id, title=message[:80], project_id=_pid, mode=('work' if mode == 'work' else 'chat'))
             db.session.add(chat)
             db.session.commit()
+        # deiza work v1: Work can be switched on inside an existing conversation; from then on it is a Work chat
+        if mode == 'work' and (getattr(chat, 'mode', None) or 'chat') != 'work':
+            chat.mode = 'work'
+            db.session.commit()
 
         # Build lightweight attachment metadata for persistence
         attachments_to_save = []

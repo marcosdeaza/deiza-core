@@ -890,5 +890,6 @@
   "st.profile": "Perfil",
   "st.profile.name": "Tu nombre",
   "st.profile.saved": "Perfil guardado",
-  "st.profile.error": "No se ha podido guardar el perfil. Inténtalo de nuevo."
+  "st.profile.error": "No se ha podido guardar el perfil. Inténtalo de nuevo.",
+  "ci.work.title": "Work: Deiza investiga, usa un navegador y prepara documentos, presentaciones y webs"
 }

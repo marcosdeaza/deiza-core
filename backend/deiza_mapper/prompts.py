@@ -80,6 +80,7 @@ RECETAS (usa exactamente esta estructura):
 - timeline: `<div class="pad"><h2>Titulo</h2><div class="timeline"><div class="step"><div class="when">2024</div><b>Hito</b><p>max 14 palabras</p></div>x3-5</div></div>`.
 - quote: `<div class="pad"><p class="q">Cita literal o idea fuerza (max 35 palabras)</p><p class="author">— Quien</p></div>`.
 - closing: `<div class="pad"><h1>Cierre (max 5 palabras)</h1><p class="sub">siguiente paso o mensaje final</p><p class="contact">contacto o web</p></div>`.
+LOGO (logo slot): un logo o escudo por diapositiva como hijo directo de la section: `<img class="logo" src="URL">` (esquina superior derecha; añade `left` o `bottom` para moverlo). Es aparte de la foto de la receta.
 FOTOS: usa EXCLUSIVAMENTE estas URLs, cada una como maximo una vez, solo en cover/split/full: %(images)s
 Si no hay fotos, no inventes URLs: apoya el ritmo visual en stat, cards, table, timeline y quote.
 CONTENIDO: hechos concretos, cifras, nombres y fechas reales del contexto; nada de relleno ("Introduccion", "Conclusion" como unico texto). Todo el texto en el idioma del usuario. Notas del ponente utiles en cada section (data-notes).
@@ -104,6 +105,7 @@ RECIPES (use exactly this structure):
 - timeline: `<div class="pad"><h2>Title</h2><div class="timeline"><div class="step"><div class="when">2024</div><b>Milestone</b><p>max 14 words</p></div>x3-5</div></div>`.
 - quote: `<div class="pad"><p class="q">Verbatim quote or key idea (max 35 words)</p><p class="author">— Who</p></div>`.
 - closing: `<div class="pad"><h1>Closing (max 5 words)</h1><p class="sub">next step or final message</p><p class="contact">contact or website</p></div>`.
+LOGO (logo slot): one logo or crest per slide as a direct child of the section: `<img class="logo" src="URL">` (top right corner; add `left` or `bottom` to move it). It is separate from the recipe photo.
 PHOTOS: use ONLY these URLs, each at most once, only in cover/split/full: %(images)s
 No photos available -> do not invent URLs: build the visual rhythm with stat, cards, table, timeline and quote.
 CONTENT: concrete facts, figures, names and dates from the context; no filler ("Introduction", "Conclusion" as the only text). All text in the user's language. Useful speaker notes on every section (data-notes).

@@ -890,5 +890,6 @@
   "st.profile": "Profile",
   "st.profile.name": "Your name",
   "st.profile.saved": "Profile saved",
-  "st.profile.error": "Could not save the profile. Please try again."
+  "st.profile.error": "Could not save the profile. Please try again.",
+  "ci.work.title": "Work: Deiza researches, uses a browser and prepares documents, decks and websites"
 }

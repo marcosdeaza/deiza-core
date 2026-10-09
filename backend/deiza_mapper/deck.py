@@ -39,7 +39,7 @@ LAYOUTS = ('cover', 'section', 'split', 'full', 'text', 'cards', 'stat', 'two', 
 # classes deck.css knows; anything else the model invents is dropped (there is no CSS for it anyway)
 KNOWN_CLASSES = set(LAYOUTS) | {
     'slide', 'pad', 'kicker', 'rule', 'sub', 'muted', 'accent', 'accent2', 'pill', 'num', 'tick', 'foot', 'body', 'grow',
-    'split-img', 'full-img', 'overlay', 'bar', 'field', 'edge', 'below', 'meta', 'index', 'display',
+    'split-img', 'full-img', 'overlay', 'bar', 'field', 'edge', 'below', 'meta', 'index', 'display', 'logo',
     'grid-2', 'grid-3', 'grid-4', 'card', 'idx', 'stat-num', 'stat-label', 'stats', 'cols', 'col',
     'step', 'when', 'quote-mark', 'q', 'author', 'contact',
     'left', 'soft', 'bg-accent', 'bg-surface', 'dark', 'top', 'bottom', 'center', 'vs', 'four', 'two', 'plain',
@@ -195,7 +195,7 @@ def _wrap_in_pad(sec):
     content = []
     pad_classes = []
     for c in kids:
-        if c.tag == 'img' and (_has_class(c, 'split-img') or _has_class(c, 'full-img')):
+        if c.tag == 'img' and (_has_class(c, 'split-img') or _has_class(c, 'full-img') or _has_class(c, 'logo')):
             top_level.append(c)
         elif _has_class(c, 'foot'):
             top_level.append(c)
@@ -313,9 +313,20 @@ def sanitize_model_deck(fragment: str, allowed_images=None, max_slides: int = 16
         _clean_tree(sec)
         # pictures: only recipe slots survive
         first_pic = None
+        logo = None
         for img in list(sec.iter('img')):
             if not _image_allowed(img.get('src'), allowed):
                 _drop(img)
+                continue
+            # logo slot: one logo or crest per slide, in a corner, on top of any recipe
+            if _has_class(img, 'logo'):
+                if logo is not None:
+                    _drop(img)
+                    continue
+                _set_classes(img, ['logo'] + [m for m in ('left', 'bottom') if _has_class(img, m)])
+                if 'alt' not in img.attrib:
+                    img.set('alt', '')
+                logo = img
                 continue
             role = 'full-img' if _has_class(img, 'full-img') else ('split-img' if _has_class(img, 'split-img') else None)
             if first_pic is not None:
@@ -326,6 +337,10 @@ def sanitize_model_deck(fragment: str, allowed_images=None, max_slides: int = 16
             if 'alt' not in img.attrib:
                 img.set('alt', '')
             first_pic = img
+        if logo is not None and logo.getparent() is not sec:
+            logo.getparent().remove(logo)
+            logo.tail = None
+            sec.append(logo)
         if first_pic is not None and first_pic.getparent() is not sec:
             _drop(first_pic) if first_pic.getparent() is None else first_pic.getparent().remove(first_pic)
             sec.insert(0, first_pic)
