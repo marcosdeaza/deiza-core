@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useLocation } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { readConsent, saveConsent } from '@/lib/consent';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 
 /**
  * Cookie notice. Deiza only sets technical cookies, so the AEPD does not require a

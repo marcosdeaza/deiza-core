@@ -11,7 +11,7 @@ import {
 import SkillsPanel from '@/components/deiza/SkillsPanel';
 import { getMemoryFacts, clearMemoryFacts, isMemoryEnabled, setMemoryEnabled, syncMemoryFromServer } from '@/lib/memory';
 import AmbientRose from '@/components/deiza/AmbientRose';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import { api, CodeKey, authHeaders } from '@/services/api';
 import { LEGAL_DOCS } from '@/data/legal';
 import { Download, FileText, Mic } from 'lucide-react';
@@ -519,7 +519,7 @@ const Settings = () => {
                   icon={<Download className="w-5 h-5 text-green-400" />}
                   iconBg="bg-green-500/15"
                   label={`Versión ${desktopVersion || '1.0.0'}`}
-                  sublabel={t('st.desktop.uptodate') || 'Deiza para escritorio'}
+                  sublabel={t('st.desktop.check')}
                   onClick={async () => {
                     const bridge = desktopBridge();
                     if (bridge?.checkUpdate) {

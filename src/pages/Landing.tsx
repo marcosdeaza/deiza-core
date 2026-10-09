@@ -11,10 +11,10 @@ import AmbientRose from "@/components/deiza/AmbientRose";
 import { Smartphone, Palette, Sparkles } from 'lucide-react';
 import { motion, useInView } from 'framer-motion';
 import { usePWA } from '@/hooks/usePWA';
-import synthesisImg from "@/assets/illustration-synthesis.png";
-import artifactImg from "@/assets/illustration-artifact.png";
-import memoryImg from "@/assets/illustration-memory.png";
-import ethicsImg from "@/assets/illustration-ethics.png";
+import synthesisImg from "@/assets/illustration-synthesis.webp";
+import artifactImg from "@/assets/illustration-artifact.webp";
+import memoryImg from "@/assets/illustration-memory.webp";
+import ethicsImg from "@/assets/illustration-ethics.webp";
 
 const Landing = () => {
   const { t } = useLanguage();

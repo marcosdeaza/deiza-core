@@ -3107,7 +3107,9 @@ GENERATION RULES:
                         'effort': None, 'vision': True, 'read_timeout': 60}
             return {'name': 'Gas 4.5', 'url': engine_url, 'key': engine_key,
                     'model': os.getenv('CODE_MODEL_GAS', 'openai.the fast model'),
-                    'effort': ('medium' if _prompt_v2_reasoning(message, files) else 'low'),
+                    # reasoning_effort only when the fast engine accepts it (CODE_GAS_EFFORT=0 turns it off)
+                    'effort': (('medium' if _prompt_v2_reasoning(message, files) else 'low')
+                               if os.getenv('CODE_GAS_EFFORT', '1') == '1' else None),
                     'vision': False, 'read_timeout': 60}
         return None
 

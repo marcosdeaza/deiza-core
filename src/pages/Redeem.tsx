@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import AmbientRose from '@/components/deiza/AmbientRose';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import { Gift, CheckCircle2, XCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { authHeaders } from '@/services/api';

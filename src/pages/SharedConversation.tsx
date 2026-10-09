@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import { api } from '@/services/api';
 import { useLanguage } from '@/contexts/LanguageContext';
 import ChatMessage from '@/components/deiza/ChatMessage';

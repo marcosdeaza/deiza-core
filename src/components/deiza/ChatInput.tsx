@@ -28,6 +28,8 @@ interface ChatInputProps {
   variant?: 'hero' | 'dock';
   /** Notified whenever the draft goes from empty → non-empty or back */
   onDraftChange?: (hasDraft: boolean) => void;
+  /** work polish v1: placeholder of the idle composer (Work mode) */
+  placeholder?: string;
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -38,7 +40,7 @@ const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(
 const ChatInput = ({
   onSend, onStop, model, onModelChange,
   disabled, busy, restoredValue, isDemo, userPlan = 'free', onUpgradeClick,
-  variant = 'dock', onDraftChange,
+  variant = 'dock', onDraftChange, placeholder,
 }: ChatInputProps) => {
   const { t } = useLanguage();
   const { trigger: haptic } = useHaptics();
@@ -395,7 +397,7 @@ const ChatInput = ({
   const getPlaceholder = () => {
     if (busy) return t('ci.thinking');
     if (isDemo) return t('ci.demo');
-    return t('ci.placeholder');
+    return placeholder || t('ci.placeholder');
   };
 
   const canSend = (value.trim().length > 0 || uploadedFiles.length > 0) && voiceState === 'idle' && !uploading && !busy;

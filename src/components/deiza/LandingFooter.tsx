@@ -4,8 +4,8 @@ import { motion, useInView } from 'framer-motion';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Link } from 'react-router-dom';
 import { LEGAL_DOCS } from '@/data/legal';
-import logo from '@/assets/logo.png';
-import doorImg from '@/assets/illustration-door.png';
+import logo from '@/assets/logo.webp';
+import doorImg from '@/assets/illustration-door.webp';
 
 const LandingFooter = () => {
   const navigate = useNavigate();

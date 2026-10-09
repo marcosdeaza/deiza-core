@@ -880,5 +880,15 @@
   "ws.work.sample.3": "Entra en la web del Ayuntamiento de Valencia y resúmeme las ayudas al alquiler para jóvenes",
   "ws.work.sample.4": "Prepara un dossier en PDF sobre mi barrio con fotos editadas en blanco y negro",
   "ws.work.sample.5": "Busca tres rutas de senderismo cerca de Teruel y hazme una guía en PDF con fotos",
-  "ws.work.done_one": "1 paso"
+  "ws.work.done_one": "1 paso",
+  "ws.work.placeholder": "Describe el encargo y el formato",
+  "ws.work.hint": "Este encargo sale mejor en Work: investiga, prepara las fotos y revisa el resultado antes de entregarlo.",
+  "ws.work.hint_action": "Hacerlo en Work",
+  "sr.share": "Compartir búsqueda",
+  "st.desktop.uptodate": "Ya tienes la última versión",
+  "st.desktop.check": "Buscar actualizaciones",
+  "st.profile": "Perfil",
+  "st.profile.name": "Tu nombre",
+  "st.profile.saved": "Perfil guardado",
+  "st.profile.error": "No se ha podido guardar el perfil. Inténtalo de nuevo."
 }

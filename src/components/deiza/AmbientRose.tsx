@@ -1,4 +1,4 @@
-import logo from "@/assets/logo.png";
+import logo from "@/assets/logo.webp";
 
 const AmbientRose = () => (
   <div className="ambient-rose" aria-hidden="true">

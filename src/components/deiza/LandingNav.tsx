@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import { Menu, X } from 'lucide-react';
 
 const LandingNav = () => {

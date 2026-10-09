@@ -5,7 +5,7 @@ import { ArrowLeft, Download, Trash2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import AmbientRose from '@/components/deiza/AmbientRose';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import { LEGAL_DOCS, LEGAL_VERSION, OWNER, getLegalDoc, type LegalSlug } from '@/data/legal';
 
 /* ── Hand-drawn sketches in the Docs/News family, one per document ── */

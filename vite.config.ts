@@ -60,9 +60,6 @@ export default defineConfig(({ mode }) => ({
         manualChunks: {
           "vendor-react": ["react", "react-dom", "react-router-dom"],
           "vendor-ui": ["framer-motion", "sonner", "@radix-ui/react-dialog", "@radix-ui/react-tooltip"],
-          "vendor-markdown": ["react-markdown", "remark-gfm"],
-          "vendor-math": ["remark-math", "rehype-katex", "katex"],
-          "vendor-highlight": ["react-syntax-highlighter"],
           "vendor-panels": ["react-resizable-panels"],
         },
       },

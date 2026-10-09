@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ChevronDown } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import AmbientRose from '@/components/deiza/AmbientRose';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import { NEWS, type NewsArt } from '@/data/news';
 import { solid5LaunchActive } from '@/lib/launch';
 import {

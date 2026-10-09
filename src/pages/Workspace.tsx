@@ -9,7 +9,7 @@ import NameSetupDialog from '@/components/deiza/NameSetupDialog';
 import { api, Chat, Project, authHeaders, apiErrorMessage } from '@/services/api';
 import { isNative, shareText, haptic as nativeHaptic } from '@/lib/native';
 import ProjectPanel from '@/components/deiza/ProjectPanel';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 
 const MOBILE_SIDEBAR_W = 292; // px — sidebar width on mobile
 
@@ -66,6 +66,10 @@ interface Message {
 }
 
 const DEMO_MAX_MESSAGES = 5;
+
+// work hint v1: a deliverable plus research or photos is a job for Work
+const WORK_HINT_DELIVERABLE = /\b(haz(me)?|hacer|crea(r|me)?|prepara(r|me)?|genera(r|me)?|monta(r|me)?|dise[ñn]a(r|me)?|elabora(r|me)?|make|create|build|prepare|design)\b[^.?!\n]{0,48}(pdf|presentaci|power ?point|pptx|diapositiva|dossier|informe|gu[ií]a|folleto|cat[aá]logo|report|slides|deck)/i;
+const WORK_HINT_RESEARCH = /(busca|investiga|compara|fotos?|im[aá]genes|entra en|web|actualizad|[uú]ltim|precios?|research|compare|photos?|images|latest)/i;
 
 /* ── Rotating sample prompts shown as the empty-state subtitle (fades between phrases) ── */
 const SAMPLE_PROMPTS: Record<string, string[]> = {
@@ -1461,6 +1465,8 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     haptic('selection');
     if (messages.length > 0 || currentChatId) handleNewChat();
     setWorkMode(next);
+    // Work reads screenshots and photos: it runs on Liquid or Solid (the backend upgrades Gas anyway)
+    if (next && model === 'gas') setModel('liquid');
   };
 
   // ── Projects ──
@@ -1821,6 +1827,24 @@ const artifactMarker = latestRaw.indexOf('```artifact');
               );
             })}
 
+            {!workMode && !isLoading && !isDemoMode && (() => {
+              const last = messages[messages.length - 1];
+              const lastUser = [...messages].reverse().find(m => m.role === 'user');
+              if (!last || last.role !== 'assistant' || last.error || !lastUser) return null;
+              if (!WORK_HINT_DELIVERABLE.test(lastUser.content) || !WORK_HINT_RESEARCH.test(lastUser.content)) return null;
+              return (
+                <div className="-mt-3 mb-8 flex flex-wrap items-center gap-x-3 gap-y-2 font-body text-[12.5px] text-muted-foreground">
+                  <span>{t('ws.work.hint')}</span>
+                  <button
+                    onClick={() => { const text = lastUser.content; switchWorkspaceMode(true); setRestoredInput(text); }}
+                    className="px-2.5 py-1 rounded-full border border-border/50 text-foreground/80 hover:border-primary/50 hover:text-foreground transition-colors focus-ring"
+                  >
+                    {t('ws.work.hint_action')}
+                  </button>
+                </div>
+              );
+            })()}
+
             {remoteGenDetail && !isLoading ? (
               <div className="my-2">
                 {remoteGenDetail.content ? (
@@ -1911,6 +1935,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
             userPlan={userPlan}
             onUpgradeClick={() => navigate('/plans')}
             variant={isEmpty ? 'hero' : 'dock'}
+            placeholder={workMode ? t('ws.work.placeholder') : undefined}  // work polish v1
           />
         </motion.div>
 

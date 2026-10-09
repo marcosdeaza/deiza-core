@@ -17,7 +17,7 @@ import {
   Smartphone 
 } from 'lucide-react';
 import { toast } from 'sonner';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import AmbientRose from '@/components/deiza/AmbientRose';
 import CapuSprite from '@/components/deiza/CapuSprite';
 import { detectDesktopOS } from '@/lib/desktop';

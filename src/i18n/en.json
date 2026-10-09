@@ -880,5 +880,15 @@
   "ws.work.sample.3": "Go to the city council's website and summarise the rent aid for young people",
   "ws.work.sample.4": "Prepare a PDF dossier about my neighbourhood with photos edited in black and white",
   "ws.work.sample.5": "Find three hiking routes near Teruel and make me a PDF guide with photos",
-  "ws.work.done_one": "1 step"
+  "ws.work.done_one": "1 step",
+  "ws.work.placeholder": "Describe the job and the format",
+  "ws.work.hint": "This job works better in Work: it researches, prepares the photos and checks the result before delivering it.",
+  "ws.work.hint_action": "Do it in Work",
+  "sr.share": "Share search",
+  "st.desktop.uptodate": "You have the latest version",
+  "st.desktop.check": "Check for updates",
+  "st.profile": "Profile",
+  "st.profile.name": "Your name",
+  "st.profile.saved": "Profile saved",
+  "st.profile.error": "Could not save the profile. Please try again."
 }

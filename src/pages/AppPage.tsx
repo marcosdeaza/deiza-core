@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Smartphone, Zap, RefreshCw, Download as DownloadIcon, Share, Plus, Check, ArrowLeft, Monitor } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { usePWA } from '@/hooks/usePWA';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import AmbientRose from '@/components/deiza/AmbientRose';
 
 const PhoneRoseIllustration = ({ className }: { className?: string }) => (

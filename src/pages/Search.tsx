@@ -7,7 +7,7 @@ import {
   Share2, Pencil, MoreVertical, ExternalLink, Check, Zap, Sparkles
 } from 'lucide-react';
 import { toast } from 'sonner';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { api } from '@/services/api';

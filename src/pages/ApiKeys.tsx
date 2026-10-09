@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import AmbientRose from '@/components/deiza/AmbientRose';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import { api, authHeaders, type CodeKey } from '@/services/api';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';

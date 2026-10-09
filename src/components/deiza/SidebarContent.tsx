@@ -5,7 +5,7 @@ import { Plus, FolderOpen, ChevronDown, Settings, LogOut, SquarePen, Sparkles, X
 import type { Chat, Project } from '@/services/api';
 import { useLanguage } from '@/contexts/LanguageContext';
 import ConversationList from './ConversationList';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import { isNative, haptic } from '@/lib/native';
 import { isDesktopApp } from '@/lib/desktop';
 import { desktopLaunchActive } from '@/lib/launch';

@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import { api, apiErrorMessage } from '@/services/api';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/logo.webp';
 import AmbientRose from '@/components/deiza/AmbientRose';
 import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';

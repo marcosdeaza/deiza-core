@@ -1,4 +1,4 @@
-import heroImg from '@/assets/illustration-hero.png';
+import heroImg from '@/assets/illustration-hero.webp';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
