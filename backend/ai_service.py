@@ -537,6 +537,18 @@ def _chat_gas_model() -> str:
     return (os.getenv('CHAT_MODEL_GAS') or os.getenv('CODE_MODEL_GAS') or '').strip()
 
 
+def _apply_effort(engine, effort):
+    """deiza auto v1: the user's effort (low | medium | high | max). medium keeps the automatic choice;
+    engines without reasoning_effort (a non-reasoning fast model) are left as they are."""
+    if not engine or effort not in ('low', 'high', 'max') or engine.get('effort') is None:
+        return engine
+    engine = dict(engine)
+    engine['effort'] = 'low' if effort == 'low' else 'high'
+    if effort == 'max':
+        engine['read_timeout'] = max(engine.get('read_timeout') or 90, 300)
+    return engine
+
+
 def _prompt_v2_reasoning(message, files) -> bool:
     """# prompt v2 hook: Gas reasons at medium effort when the turn is a problem to solve."""
     try:
@@ -3328,6 +3340,7 @@ GENERATION RULES:
         memory_context: str = None,
         variant: str = None, fallback: bool = True,
         custom_instructions: str = None, skills_context: str = None,
+        effort: str = None,
     ):
         """Stream a message response from the model API (server-sent events)."""
         import urllib.request
@@ -3702,6 +3715,11 @@ GENERATION RULES:
                 gen_config = {**gen_config, 'thinkingConfig': {'thinkingLevel': 'low', 'includeThoughts': True}}
         if _v2:
             system_prompt += prompt_v2.tail_reminder(language, model_key)
+        if effort == 'max':  # deiza auto v1
+            system_prompt += ('\n\n---\nEsfuerzo máximo: razona con calma antes de responder, comprueba cada paso y cubre el '
+                              'tema a fondo sin relleno.' if (language or '').startswith('es') else
+                              '\n\n---\nMaximum effort: think it through before answering, check every step and cover the '
+                              'topic thoroughly without filler.')
         payload = {
             'contents': contents,
             'system_instruction': {'parts': [{'text': system_prompt}]},
@@ -3714,7 +3732,7 @@ GENERATION RULES:
         # Every chat model generates on cloud (see _chat_engine). Everything above (photos, research,
         # decks, the prompt) is shared; only the generation changes. If the cloud engine cannot answer
         # before writing anything, the model chain below takes over as a safety net.
-        _engine = self._chat_engine(model_key, contents, message, files, mode)
+        _engine = _apply_effort(self._chat_engine(model_key, contents, message, files, mode), effort)
         if _engine:
             _engine_text = False
             _t0 = time.time()

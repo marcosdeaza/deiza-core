@@ -697,6 +697,35 @@ def demo_chat_stream():
     return Response(stream_with_context(generate()), mimetype='text/event-stream', headers=cors_headers)
 
 
+def _auto_mode(message, chat_id, user_id):
+    """deiza auto v1: 'work' for jobs that need the agent (browser, decks, researched deliverables, edits of
+    a Work deliverable), 'chat' for everything else (faster)."""
+    import unicodedata
+    f = ''.join(c for c in unicodedata.normalize('NFKD', (message or '').lower()) if not unicodedata.combining(c))
+    browser = (re.search(r'\b(entra|abre|navega|visita|ve a|mira en|rellena|inicia sesion|juega|haz clic|open|go to|visit|browse|play)\b', f)
+               and re.search(r'(https?://|www\.|\.(com|org|es|net|io|edu|dev)\b|\bweb\b|pagina|lichess|classroom|campus|aula virtual|'
+                             r'website|page)', f))
+    deck = re.search(r'(presentaci|diapositiva|power ?point|pptx|\bslides\b|\bdeck\b)', f)
+    deliverable = re.search(r'\b(haz|hazme|hacer|crea|creame|prepara|preparame|genera|generame|monta|disena|elabora|make|create|'
+                            r'build|prepare|design)\b[^.?!\n]{0,60}(pdf|informe|dossier|guia|folleto|catalogo|revista|reportaje|'
+                            r'documento|report|brochure|guide|magazine)', f)
+    research = re.search(r'(busca|investiga|compara|foto|imagen|actualizad|ultim|precio|logo|escudo|research|compare|photo|'
+                         r'image|latest|price)', f)
+    if browser or deck or (deliverable and research):
+        return 'work'
+    if chat_id:
+        try:
+            from models import Chat as _ChatA
+            _c = _ChatA.query.filter_by(id=chat_id, user_id=user_id).first()
+            if _c and (getattr(_c, 'mode', None) or 'chat') == 'work' and re.search(
+                    r'\b(cambia|anade|quita|pon|mueve|sustituye|corrige|ajusta|amplia|traduce|hazlo|repite|otra vez|sigue|continua|'
+                    r'change|add|remove|replace|fix|move|continue)\b', f):
+                return 'work'
+        except Exception:
+            pass
+    return 'chat'
+
+
 @app.route('/api/chat/stream', methods=['POST'])
 @login_required
 def send_message_stream():
@@ -710,6 +739,12 @@ def send_message_stream():
     language = data.get('language', 'en')
     files_data = data.get('files', [])
     mode = data.get('mode', 'chat')
+    # deiza auto v1: Chat and Work are one input; 'auto' picks per message
+    effort = str(data.get('effort') or '').strip().lower()[:8] or None
+    if effort not in (None, 'low', 'medium', 'high', 'max'):
+        effort = None
+    if mode == 'auto':
+        mode = _auto_mode(data.get('message', ''), data.get('chat_id'), session.get('user_id'))
     agent_type = data.get('agent_type', 'coder')
     # Model variant (e.g. 'liquid45' = Liquid 4.5) and "respaldo por cadena" toggle
     model_variant = (data.get('model_variant') or '').strip()[:24] or None
@@ -1343,14 +1378,14 @@ def send_message_stream():
                                           files=files_data, user_id=user_id, chat_id=new_chat_id,
                                           project_context=project_context, memory_context=_stream_memory_ctx,
                                           custom_instructions=custom_instructions, skills_context=_skills_ctx,
-                                          usage_sink=_usage_acc)
+                                          usage_sink=_usage_acc, effort=effort)
             else:
               _gen = ai_service.stream_message(message=message, history=prior_history, model=model, language=language,
                                              files=files_data, mode=mode, agent_type=agent_type,
                                              project_context=project_context, memory_context=_stream_memory_ctx,
                                              variant=model_variant, fallback=chain_fallback,
                                              custom_instructions=custom_instructions,
-                                             skills_context=_skills_ctx, usage_sink=_usage_acc)
+                                             skills_context=_skills_ctx, usage_sink=_usage_acc, effort=effort)
             _pump_start(_gen)
             if _gen_key:
                 _gen_save()

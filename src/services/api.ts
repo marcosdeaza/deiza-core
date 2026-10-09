@@ -46,14 +46,16 @@ export const authHeaders = (): Record<string, string> => {
 };
 
 /** Per-user chat preferences kept in localStorage and sent with every message. */
-export const userChatPrefs = (): { chain_fallback: boolean; custom_instructions?: string } => {
+export const userChatPrefs = (): { chain_fallback: boolean; custom_instructions?: string; effort?: string } => {
   let chain = true;
   let custom = '';
+  let effort = '';  // deiza auto v1
   try {
     chain = localStorage.getItem('deiza-chain-fallback') !== 'false';
     custom = (localStorage.getItem('deiza-initial-prompt') || '').trim().slice(0, 2000);
+    effort = localStorage.getItem('deiza:effort') || '';
   } catch { /* storage unavailable */ }
-  return { chain_fallback: chain, ...(custom ? { custom_instructions: custom } : {}) };
+  return { chain_fallback: chain, ...(custom ? { custom_instructions: custom } : {}), ...(effort ? { effort } : {}) };
 };
 
 export interface CustomSkill {

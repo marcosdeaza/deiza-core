@@ -2,7 +2,8 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { ArrowUp, Plus, X, Square, FileText, Check, Briefcase } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '@/contexts/LanguageContext';
-import ModelSelector, { type ModelKey } from './ModelSelector';
+import ModelSelector, { type ModelKey, type Effort } from './ModelSelector';
+import { ModeMenu, type ChatMode } from './BarMenu';
 import AudioRecorder, { type AudioRecorderHandle, type VoiceState } from './AudioRecorder';
 import VoiceWave from './VoiceWave';
 import { api, apiErrorMessage } from '@/services/api';
@@ -30,9 +31,12 @@ interface ChatInputProps {
   onDraftChange?: (hasDraft: boolean) => void;
   /** work polish v1: placeholder of the idle composer (Work mode) */
   placeholder?: string;
-  /** work chip v1: Work mode toggle shown next to the model selector */
-  workMode?: boolean;
-  onWorkToggle?: () => void;
+  /** deiza auto v1: row under the composer — left slot (project), model + effort, conversation mode */
+  effort?: Effort;
+  onEffortChange?: (e: Effort) => void;
+  mode?: ChatMode;
+  onModeChange?: (m: ChatMode) => void;
+  leftSlot?: React.ReactNode;
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -43,7 +47,7 @@ const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(
 const ChatInput = ({
   onSend, onStop, model, onModelChange,
   disabled, busy, restoredValue, isDemo, userPlan = 'free', onUpgradeClick,
-  variant = 'dock', onDraftChange, placeholder, workMode, onWorkToggle,
+  variant = 'dock', onDraftChange, placeholder, effort, onEffortChange, mode, onModeChange, leftSlot,
 }: ChatInputProps) => {
   const { t } = useLanguage();
   const { trigger: haptic } = useHaptics();
@@ -604,26 +608,6 @@ const ChatInput = ({
                 : <Plus className="w-5 h-5" strokeWidth={1.75} />}
             </motion.button>
 
-            <ModelSelector
-              model={model}
-              onModelChange={onModelChange}
-              userPlan={userPlan}
-              onUpgradeClick={onUpgradeClick}
-            />
-            {onWorkToggle && (
-              <button
-                type="button"
-                onClick={() => { haptic('light'); onWorkToggle(); }}
-                aria-pressed={!!workMode}
-                title={t('ci.work.title')}
-                className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-full border font-body text-[12.5px] leading-none transition-colors focus-ring shrink-0 ${workMode
-                  ? 'bg-primary/15 border-primary/35 text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/70'}`}
-              >
-                <Briefcase className="w-3.5 h-3.5" strokeWidth={1.9} aria-hidden="true" />
-                <span>Work</span>
-              </button>
-            )}
           </div>
 
           {/* Action slot: mic when empty → send when there's a draft → stop while generating */}
@@ -685,6 +669,23 @@ const ChatInput = ({
               </>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* deiza auto v1: controls live under the composer, outside it */}
+      <div className="flex items-center justify-between gap-2 px-1 sm:px-2 pt-1.5">
+        <div className="min-w-0">{leftSlot}</div>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <ModelSelector
+            model={model}
+            onModelChange={onModelChange}
+            userPlan={userPlan}
+            onUpgradeClick={onUpgradeClick}
+            effort={effort}
+            onEffortChange={onEffortChange}
+            align="right"
+          />
+          {onModeChange && <ModeMenu mode={mode || 'auto'} onChange={onModeChange} />}
         </div>
       </div>
     </div>

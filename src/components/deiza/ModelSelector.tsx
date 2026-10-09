@@ -6,6 +6,9 @@ import { solid5LaunchActive } from '@/lib/launch';
 import { haptic } from '@/lib/native';
 
 export type ModelKey = 'gas' | 'liquid' | 'solid' | 'fast' | 'pro' | 'ultra';
+/** deiza auto v1: how hard the model thinks (medium = Deiza decides per question) */
+export type Effort = 'low' | 'medium' | 'high' | 'max';
+export const EFFORTS: Effort[] = ['low', 'medium', 'high', 'max'];
 
 interface ModelSelectorProps {
   model: ModelKey;
@@ -13,6 +16,9 @@ interface ModelSelectorProps {
   userPlan?: string;
   onUpgradeClick?: () => void;
   hideFast?: boolean;
+  effort?: Effort;
+  onEffortChange?: (e: Effort) => void;
+  align?: 'left' | 'right';
 }
 
 type Family = 'gas' | 'liquid' | 'solid';
@@ -107,7 +113,7 @@ const ModelRow = ({ m, selected, hasAccess, t, onSelect }: RowProps) => (
   </button>
 );
 
-const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick }: ModelSelectorProps) => {
+const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick, effort = 'medium', onEffortChange, align = 'left' }: ModelSelectorProps) => {
   const [open, setOpen] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -166,14 +172,19 @@ const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick
       <button
         type="button"
         onClick={handleToggle}
-        className="flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 rounded-full hover:bg-muted/60 transition-colors focus-ring text-foreground/80 hover:text-foreground"
+        className={onEffortChange
+          ? 'flex items-center gap-1.5 h-8 px-2 rounded-lg hover:bg-muted/50 transition-colors focus-ring text-foreground/85 hover:text-foreground'
+          : 'flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 rounded-full hover:bg-muted/60 transition-colors focus-ring text-foreground/80 hover:text-foreground'}
         aria-label={`${t('model.label')}: ${current.name} ${current.version}`}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
         <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${FAMILY_DOT[current.family]}`} aria-hidden="true" />
-        <span className="font-body text-[12px] font-medium tracking-tight">
+        <span className={`font-body ${onEffortChange ? 'text-[13px]' : 'text-[12px]'} font-medium tracking-tight whitespace-nowrap`}>
           {current.name} <span className="text-foreground/55">{current.version}</span>
+          {onEffortChange && current.family !== 'gas' && (
+            <span className="ml-1.5 font-normal text-muted-foreground/75">{t(`effort.${effort}`)}</span>
+          )}
         </span>
         <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2 }} aria-hidden="true" className="text-muted-foreground/60">
           <ChevronDown className="w-3.5 h-3.5" />
@@ -184,7 +195,7 @@ const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick
         {open && (
           <motion.div
             role="listbox"
-            className="absolute bottom-full mb-2 left-0 z-50 w-[min(320px,calc(100vw-1.5rem))] bg-card border border-border/40 deiza-shadow-lg rounded-2xl p-1.5 origin-bottom-left"
+            className={`absolute bottom-full mb-2 ${align === 'right' ? 'right-0 origin-bottom-right' : 'left-0 origin-bottom-left'} z-50 w-[min(320px,calc(100vw-1.5rem))] bg-card border border-border/40 deiza-shadow-lg rounded-2xl p-1.5`}
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0, transition: { duration: 0.12, ease: 'easeOut' } }}
             exit={{ opacity: 0, transition: { duration: 0.08, ease: 'easeIn' } }}
@@ -195,6 +206,33 @@ const ModelSelector = ({ model, onModelChange, userPlan = 'free', onUpgradeClick
             {primary.map((m, i) => (
               <ModelRow key={m.key} m={m} index={i} selected={m.key === current.key} hasAccess={m.plans.includes(userPlan)} t={t} onSelect={handleSelect} />
             ))}
+
+            {onEffortChange && (
+              <div className="border-t border-border/25 mt-1.5 pt-2 px-1.5 pb-1.5">
+                <div className="px-1.5 pb-1.5 font-body text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/50">{t('effort.label')}</div>
+                {current.family === 'gas' ? (
+                  <p className="px-1.5 pb-1 font-body text-[11.5px] text-muted-foreground/70 leading-snug">{t('effort.gas')}</p>
+                ) : (<>
+                  <div className="grid grid-cols-4 gap-1 p-0.5 rounded-xl bg-muted/40" role="radiogroup" aria-label={t('effort.label')}>
+                    {EFFORTS.map(e => (
+                      <button
+                        key={e}
+                        type="button"
+                        role="radio"
+                        aria-checked={effort === e}
+                        onClick={() => { haptic('selection'); onEffortChange(e); }}
+                        className={`h-8 rounded-lg font-body text-[12px] transition-colors focus-ring ${effort === e ? 'bg-card text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.25)]' : 'text-muted-foreground hover:text-foreground'}`}
+                      >
+                        {t(`effort.${e}`)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className={`px-1.5 pt-2 font-body text-[11px] leading-snug ${effort === 'max' ? 'text-amber-400/90' : 'text-muted-foreground/70'}`}>
+                    {t(`effort.${effort}.detail`)}
+                  </p>
+                </>)}
+              </div>
+            )}
 
             {more.length > 0 && (<>
             <button

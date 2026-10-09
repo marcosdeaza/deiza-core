@@ -569,19 +569,19 @@ def _prune_images(msgs):
 
 def stream(message, history=None, model='pro', language='es', files=None, user_id=None, chat_id=None,
            usage_sink=None, project_context=None, memory_context=None, custom_instructions=None,
-           skills_context=None, **_):
+           skills_context=None, effort=None, **_):
     import ai_service
     prev = getattr(ai_service._USAGE_TLS, 'sink', None)
     ai_service._USAGE_TLS.sink = usage_sink
     try:
         yield from _run(message, history, model, language, files, user_id, chat_id, project_context,
-                        memory_context, custom_instructions, skills_context)
+                        memory_context, custom_instructions, skills_context, effort)
     finally:
         ai_service._USAGE_TLS.sink = prev
 
 
 def _run(message, history, model, language, files, user_id, chat_id, project_context, memory_context,
-         custom_instructions, skills_context):
+         custom_instructions, skills_context, effort=None):
     import ai_service
     import prompt_v2
     from conversation_context import fit_messages
@@ -676,7 +676,9 @@ def _run(message, history, model, language, files, user_id, chat_id, project_con
     engine = dict(svc._chat_engine(model_key, [{}, {}, {}], message or '', files, 'agent') or {})
     if not engine:
         raise RuntimeError('No cloud engine configured')
-    engine['effort'] = 'medium'
+    # deiza auto v1: the user's effort; max also gets more rounds
+    engine['effort'] = {'low': 'low', 'high': 'high', 'max': 'high'}.get(effort or '', 'medium')
+    max_rounds = MAX_ROUNDS + (20 if effort == 'max' else 0)
     usage_add = ai_service._usage_add_openai
     tools = _tools()
     window = 1048576 if model_key == 'solid' else 262144
@@ -694,7 +696,7 @@ def _run(message, history, model, language, files, user_id, chat_id, project_con
         return not no_photos and (kind in ('pptx', 'deck', 'slides', 'presentation') or photo_job)
     yield _thinking('Preparando el trabajo' if es else 'Getting the job ready')
 
-    for rnd in range(MAX_ROUNDS):
+    for rnd in range(max_rounds):
         if time.time() - t0 > MAX_SECONDS:
             yield ('\n\n' + ('He llegado al tiempo máximo de esta tarea. Dime si sigo desde aquí.' if es else
                             'I reached the time limit for this job. Tell me if I should continue from here.'))

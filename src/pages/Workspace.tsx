@@ -24,6 +24,8 @@ import ChatInput from '@/components/deiza/ChatInput';
 import ArtifactPanel from '@/components/deiza/ArtifactPanel';
 import WorkTrace from '@/components/deiza/WorkTrace';
 import WorkPanel from '@/components/deiza/WorkPanel';
+import { ProjectMenu, type ChatMode } from '@/components/deiza/BarMenu';
+import type { Effort } from '@/components/deiza/ModelSelector';
 import { applyWorkEvent, workFromMeta, type WorkState, type WorkShot } from '@/lib/workTypes';
 import AmbientRose from '@/components/deiza/AmbientRose';
 import DeizaLoader from '@/components/deiza/DeizaLoader';
@@ -218,7 +220,15 @@ const Workspace = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [model, setModelState] = useState<ModelKey>('liquid');
   // deiza work v1: Chat | Work. Work runs the agent with tools and a live browser (WorkPanel).
-  const [workMode, setWorkMode] = useState(false);
+  const [workMode, setWorkMode] = useState(false);  // this conversation uses Work (panel, trace)
+  // deiza auto v1: what the user picked under the composer
+  const [modePref, setModePrefState] = useState<ChatMode>(() => {
+    try { const v = localStorage.getItem('deiza:mode'); return v === 'chat' || v === 'work' ? v : 'auto'; } catch { return 'auto'; }
+  });
+  const [effort, setEffortState] = useState<Effort>(() => {
+    try { const v = localStorage.getItem('deiza:effort'); return (v === 'low' || v === 'high' || v === 'max') ? v : 'medium'; } catch { return 'medium'; }
+  });
+  const setEffort = (e: Effort) => { setEffortState(e); try { localStorage.setItem('deiza:effort', e); } catch {} };
   const [workPanelOpen, setWorkPanelOpen] = useState(false);
   const [workShot, setWorkShot] = useState<WorkShot | null>(null);
   const workPanelDismissedRef = useRef(false);
@@ -1037,7 +1047,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
       const demoHistory = messages.map(m => ({ role: m.role, content: m.content }));
       // Add empty streaming message
       setMessages(prev => [...prev, { id: streamingId, role: 'assistant', content: '' }]);
-    if (workMode) workPanelDismissedRef.current = false;
+    if (workMode || modePref !== 'chat') workPanelDismissedRef.current = false;
 
       cancelStreamRef.current = api.streamDemoMessage(
         content, demoHistory, language,
@@ -1122,7 +1132,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     }
 
     setMessages(prev => [...prev, { id: streamingId, role: 'assistant', content: '' }]);
-    if (workMode) workPanelDismissedRef.current = false;
+    if (workMode || modePref !== 'chat') workPanelDismissedRef.current = false;
 
     // Mark this chat as actively processing (sidebar spinner)
     if (currentChatId) markProcessing(currentChatId, true);
@@ -1280,7 +1290,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
           m.id === streamingId ? { ...m, images } : m
         ));
       },
-      workMode ? 'work' : undefined,  // mode
+      modePref === 'chat' ? undefined : modePref,  // mode: auto (Deiza decides) or work
       undefined,  // agentType
       (sources) => {
         setMessages(prev => prev.map(m =>
@@ -1304,6 +1314,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
         ));
       },
       (ev) => {
+        setWorkMode(true);  // the answer went through Work: show its panel and trace
         if (ev?.type === 'shot') {
           if (ev.img) setWorkShot({ img: ev.img, url: ev.url || '', title: ev.title });
           if (!isMobile && !workPanelDismissedRef.current) setWorkPanelOpen(true);
@@ -1457,15 +1468,16 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     setArtifactHistoryIndex(-1);
     setWorkShot(null);
     setWorkPanelOpen(false);
+    setWorkMode(false);
     if (isMobile) setSidebarOpen(false);
   };
   handleNewChatRef.current = handleNewChat;
-  const switchWorkspaceMode = (next: boolean) => {
-    if (next === workMode) return;
-    haptic('selection');
-    setWorkMode(next);  // work chip v1: stays in the current conversation
+  const changeMode = (next: ChatMode) => {
+    setModePrefState(next);
+    try { localStorage.setItem('deiza:mode', next); } catch {}
+    const goingWork = next === 'work';
     // Work reads screenshots and photos: it runs on Liquid or Solid (the backend upgrades Gas anyway)
-    if (next && model === 'gas') setModel('liquid');
+    if (goingWork && model === 'gas') setModel('liquid');
   };
 
   // ── Projects ──
@@ -1742,7 +1754,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                   transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
                 >
                   <h2 className={`font-display tracking-tight text-foreground leading-tight w-full break-words text-[28px] sm:text-[38px]`}>
-                    {workMode ? t('ws.work.greeting') : greeting}
+                    {modePref === 'work' ? t('ws.work.greeting') : greeting}
                   </h2>
                 </motion.div>
               )}
@@ -1826,7 +1838,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
               );
             })}
 
-            {!workMode && !isLoading && !isDemoMode && (() => {
+            {modePref === 'chat' && !isLoading && !isDemoMode && (() => {
               const last = messages[messages.length - 1];
               const lastUser = [...messages].reverse().find(m => m.role === 'user');
               if (!last || last.role !== 'assistant' || last.error || !lastUser) return null;
@@ -1835,7 +1847,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                 <div className="-mt-3 mb-8 flex flex-wrap items-center gap-x-3 gap-y-2 font-body text-[12.5px] text-muted-foreground">
                   <span>{t('ws.work.hint')}</span>
                   <button
-                    onClick={() => { const text = lastUser.content; switchWorkspaceMode(true); setRestoredInput(text); }}
+                    onClick={() => { const text = lastUser.content; changeMode('work'); setRestoredInput(text); }}
                     className="px-2.5 py-1 rounded-full border border-border/50 text-foreground/80 hover:border-primary/50 hover:text-foreground transition-colors focus-ring"
                   >
                     {t('ws.work.hint_action')}
@@ -1934,16 +1946,21 @@ const artifactMarker = latestRaw.indexOf('```artifact');
             userPlan={userPlan}
             onUpgradeClick={() => navigate('/plans')}
             variant={isEmpty ? 'hero' : 'dock'}
-            placeholder={workMode ? t('ws.work.placeholder') : undefined}  // work polish v1
-            workMode={workMode}
-            onWorkToggle={isAuthenticated && !isDemoMode ? () => switchWorkspaceMode(!workMode) : undefined}
+            placeholder={modePref === 'work' ? t('ws.work.placeholder') : undefined}  // work polish v1
+            effort={effort}
+            onEffortChange={setEffort}
+            mode={modePref}
+            onModeChange={isAuthenticated && !isDemoMode ? changeMode : undefined}
+            leftSlot={isEmpty && isAuthenticated && !isDemoMode && !currentChatId
+              ? <ProjectMenu projects={projects} activeId={activeProjectId} onChange={setActiveProjectId} />
+              : undefined}
           />
         </motion.div>
 
         {/* Empty state: rotating suggestion + spacer that keeps the composer near the centre */}
         {isEmpty && (
           <div className={`min-h-0 shrink flex flex-col items-center pt-3 pb-safe overflow-hidden flex-[1.15_1_0%]`}>
-            <SamplePromptCarousel lang={language} onPick={(p) => setRestoredInput(p)} work={workMode} />
+            <SamplePromptCarousel lang={language} onPick={(p) => setRestoredInput(p)} work={modePref === 'work'} />
             {isAuthenticated && !isTouchDevice && (
               <div className="hidden md:flex items-center gap-5 mt-7 font-body text-[11px] text-muted-foreground/40 select-none">
                 {[
