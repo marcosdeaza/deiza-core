@@ -950,5 +950,6 @@
   "ws.work.queued_hint": "Se leerá en el próximo paso",
   "ws.work.enter_hint": "Intro para enviar",
   "ws.work.send": "Enviar a Deiza",
-  "ws.work.next_task": "Modelo del próximo encargo"
+  "ws.work.next_task": "Modelo del próximo encargo",
+  "ws.work.continue": "Continuar"
 }

@@ -1309,10 +1309,14 @@ const artifactMarker = latestRaw.indexOf('```artifact');
             ? apiErrorMessage({ code: err, message: '' }, t, t('ws.err.unavailable'))
             : (err && !/upstream|DZ-8 error/.test(err)) ? err : t('ws.err.unavailable');
           // Keep the user's message in the thread and offer a one-tap retry
-          setMessages(prev => [
-            ...prev.filter(m => m.id !== streamingId),
-            { id: Date.now(), role: 'assistant', content: userFriendly, error: true, retryOf: finalContent, retryFiles: files },
-          ]);
+          setMessages(prev => {
+            const progress = prev.find(m => m.id === streamingId)?.work;
+            return [
+              ...prev.filter(m => m.id !== streamingId),
+              { id: Date.now(), role: 'assistant', content: userFriendly, error: true, retryOf: finalContent, retryFiles: files,
+                work: progress ? applyWorkEvent(progress, { type: 'state', status: progress.status === 'cancelled' ? 'cancelled' : 'interrupted', reason: progress.reason || 'connection' }) : undefined },
+            ];
+          });
         }
         lastLocalDoneRef.current = Date.now();
         isStreamingRef.current = false;
@@ -1993,6 +1997,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                   >
                     <span className="mt-[7px] w-1.5 h-1.5 rounded-full bg-destructive shrink-0" aria-hidden="true" />
                     <div className="flex-1 min-w-0">
+                      {msg.work && <WorkTrace work={msg.work} live={false} onOpenComputer={() => setWorkPanelOpen(true)} />}
                       <p className="font-body text-[14px] text-foreground/85 leading-relaxed">{msg.content}</p>
                       {msg.retryOf && (
                         <button
@@ -2008,7 +2013,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                           }}
                           className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-card border border-border/40 hover:border-primary/40 font-body text-[12.5px] text-foreground/85 transition-colors focus-ring"
                         >
-                          {t('ws.retry')}
+                          {msg.work ? t('ws.work.continue') : t('ws.retry')}
                         </button>
                       )}
                     </div>

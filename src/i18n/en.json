@@ -950,5 +950,6 @@
   "ws.work.queued_hint": "Read at the next step",
   "ws.work.enter_hint": "Enter to send",
   "ws.work.send": "Send to Deiza",
-  "ws.work.next_task": "Model for the next task"
+  "ws.work.next_task": "Model for the next task",
+  "ws.work.continue": "Continue"
 }
