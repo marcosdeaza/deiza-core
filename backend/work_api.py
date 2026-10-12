@@ -75,6 +75,36 @@ def register_work(app, auth_decorator):
             return jsonify({'error': 'browser_unavailable'}), 503
         return jsonify(st)
 
+    @app.route('/api/work/steer/<int:chat_id>', methods=['POST'])
+    @auth_decorator
+    def work_steer(chat_id):
+        """work continuity v1: a message written while the Work job of this chat runs; the agent reads it
+        at its next step. {"idle": true} when nothing runs (the page sends it as a normal message)."""
+        import json as _json
+        from models import Chat, Message
+        from database import db
+        import work_agent
+        uid = session.get('user_id')
+        chat = Chat.query.filter_by(id=chat_id, user_id=uid).first()
+        if not chat:
+            return jsonify({'error': 'not_found'}), 404
+        text = str((request.get_json(silent=True) or {}).get('text') or '').strip()[:8000]
+        if not text:
+            return jsonify({'error': 'empty'}), 400
+        try:
+            r = work_agent._redis()
+            gen = r.get(f'deiza:gen:{chat_id}')
+            if not gen or (_json.loads(gen) or {}).get('status') != 'generating':
+                return jsonify({'idle': True})
+            work_agent.steer_push(chat_id, text)
+        except Exception as e:  # noqa: BLE001
+            logger.warning('work steer failed: %s', e)
+            return jsonify({'error': 'unavailable'}), 503
+        msg = Message(chat_id=chat_id, role='user', content=text)
+        db.session.add(msg)
+        db.session.commit()
+        return jsonify({'ok': True, 'id': msg.id})
+
     @app.route('/api/work/local/<int:chat_id>/<rid>', methods=['POST'])
     @auth_decorator
     def work_local_browser_result(chat_id, rid):

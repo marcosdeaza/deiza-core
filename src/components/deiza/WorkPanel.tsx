@@ -164,7 +164,8 @@ const WorkPanel = ({ chatId, shot, onShot, files, agentBusy, onClose, overlay, m
     act({ action: 'open', url: v });
   };
 
-  const showLocal = () => { try { (window as any).deizaDesktop?.workBrowserFocus?.(chatId); } catch { /* app closed */ } };
+  // Brings the browser of this chat to the front, and reopens it on its last page if it was closed.
+  const showLocal = () => { try { (window as any).deizaDesktop?.workBrowserFocus?.(chatId, shot?.url || ''); } catch { /* app closed */ } };
 
   // Pointer position inside the box, from page pixels.
   const pointerStyle = (() => {
@@ -232,7 +233,7 @@ const WorkPanel = ({ chatId, shot, onShot, files, agentBusy, onClose, overlay, m
             </div>
           )}
 
-          <div ref={screenRef} className="flex-1 min-h-0 relative mx-2 mb-2 mt-2 rounded-lg overflow-hidden border border-border/30 bg-[hsl(20_10%_7%)]">
+          <div ref={screenRef} className={`flex-1 min-h-0 relative mx-2 mb-2 mt-2 ${local ? 'overflow-auto' : 'rounded-lg overflow-hidden border border-border/30 bg-[hsl(20_10%_7%)]'}`}>
             {shot ? (
               <div
                 tabIndex={agentBusy || local ? -1 : 0}
@@ -247,7 +248,10 @@ const WorkPanel = ({ chatId, shot, onShot, files, agentBusy, onClose, overlay, m
                   src={`data:image/jpeg;base64,${shot.img}`}
                   alt={shot.title || shot.url}
                   draggable={false}
-                  className="absolute inset-0 w-full h-full object-contain select-none"
+                  onClick={local ? showLocal : undefined}
+                  className={local
+                    ? 'block w-full h-auto rounded-lg border border-border/30 shadow-sm select-none cursor-pointer hover:opacity-95 transition-opacity'
+                    : 'absolute inset-0 w-full h-full object-contain select-none'}
                   onLoad={() => setPointer(p => (p ? { ...p } : p))}
                 />
                 {pointerStyle && (

@@ -39,6 +39,8 @@ interface ChatInputProps {
   leftSlot?: React.ReactNode;
   /** Work chats only: show or hide the computer panel (browser and files) */
   workPanel?: { open: boolean; label: string; onToggle: () => void };
+  /** work continuity v1: while a Work job runs, what you write goes into it (read at its next step) */
+  onSteer?: (text: string) => void;
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -49,7 +51,7 @@ const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(
 const ChatInput = ({
   onSend, onStop, model, onModelChange,
   disabled, busy, restoredValue, isDemo, userPlan = 'free', onUpgradeClick,
-  variant = 'dock', onDraftChange, placeholder, effort, onEffortChange, mode, onModeChange, leftSlot, workPanel,
+  variant = 'dock', onDraftChange, placeholder, effort, onEffortChange, mode, onModeChange, leftSlot, workPanel, onSteer,
 }: ChatInputProps) => {
   const { t } = useLanguage();
   const { trigger: haptic } = useHaptics();
@@ -372,6 +374,15 @@ const ChatInput = ({
 
   const handleSubmit = () => {
     const trimmed = value.trim();
+    if (busy && onSteer && trimmed && !uploading && voiceState === 'idle') {
+      haptic('light');
+      setValue('');
+      draftRef.current = '';
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
+      try { localStorage.removeItem('deiza:composer_draft'); } catch {}
+      onSteer(trimmed);
+      return;
+    }
     if ((!trimmed && uploadedFiles.length === 0) || disabled || busy || uploading || voiceState !== 'idle') return;
     haptic('medium');
     // Record prompt in history for ArrowUp recall (guarded: storage may be corrupt)
@@ -405,7 +416,7 @@ const ChatInput = ({
   };
 
   const getPlaceholder = () => {
-    if (busy) return t('ci.thinking');
+    if (busy) return onSteer ? t('ci.steer') : t('ci.thinking');
     if (isDemo) return t('ci.demo');
     return placeholder || t('ci.placeholder');
   };
@@ -628,6 +639,17 @@ const ChatInput = ({
 
           {/* Action slot: mic when empty → send when there's a draft → stop while generating */}
           <div className="flex items-center gap-1.5">
+            {busy && onSteer && value.trim() && (
+              <motion.button
+                onClick={handleSubmit}
+                className="w-9 h-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center hover:brightness-110 transition focus-ring shrink-0 animate-in fade-in zoom-in-75 duration-150"
+                whileTap={{ scale: 0.9 }}
+                title={t('ci.steer_send')}
+                aria-label={t('ci.steer_send')}
+              >
+                <ArrowUp className="w-4 h-4" strokeWidth={2.25} />
+              </motion.button>
+            )}
             {busy ? (
               <motion.button
                 onClick={() => { haptic('medium'); onStop?.(); }}

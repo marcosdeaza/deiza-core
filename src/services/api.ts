@@ -281,6 +281,17 @@ class APIService {
 
   // Demo chat — no auth required, fast model only, stateless (memory in-browser only)
   /** deiza work v1: the user's own hands on the Work browser */
+  /** work continuity v1: a message for the Work job running in this chat ({idle: true} if none runs). */
+  async workSteer(chatId: number, text: string): Promise<{ ok?: boolean; idle?: boolean; id?: number }> {
+    const resp = await fetch(`${this.baseUrl}/api/work/steer/${chatId}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ text }),
+    });
+    if (!resp.ok) throw new Error(`work_steer_${resp.status}`);
+    return resp.json();
+  }
+
   /** local browser v1: answer a browser request of a Work chat with what this computer saw. */
   async workLocalResult(chatId: number, requestId: string, result: Record<string, any>): Promise<void> {
     await fetch(`${this.baseUrl}/api/work/local/${chatId}/${requestId}`, {

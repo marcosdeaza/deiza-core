@@ -70,6 +70,8 @@ interface Message {
   fromHistory?: boolean;
   /** image forge v1: an image is being generated for this answer (aspect fixed by the server) */
   imagePending?: { aspect: string; started?: number };
+  /** work continuity v1: written while a Work job ran, read at its next step */
+  steer?: boolean;
 }
 
 const DEMO_MAX_MESSAGES = 5;
@@ -1188,6 +1190,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
             ? { ...m, id: msgId || streamingId, content: finalContent || m.content, artifact: finalArtifact, imagePending: undefined }
             : m
         ));
+        if (streamLocalRef.current && finalContent) workSay(currentChatId || newChatId, { kind: 'say', text: finalContent });
         if (!streamVisibleRef.current) {
           streamVisibleRef.current = true;
           if (currentChatIdRef.current === (currentChatId || newChatId)) void refreshCurrentMessages();
@@ -1311,7 +1314,10 @@ const artifactMarker = latestRaw.indexOf('```artifact');
         streamingMsgIdRef.current = null;
       },
       files,
-      (step: string) => setStreamingThinkingSteps(prev => [...prev, step]),
+      (step: string) => {
+        setStreamingThinkingSteps(prev => [...prev, step]);
+        if (streamLocalRef.current) workSay(streamChatIdRef.current || currentChatIdRef.current, { kind: 'status', text: step });
+      },
       (rawImages) => {
         // Map backend {title} field to {alt} expected by WebImageGrid
         const images = (rawImages as any[]).map((img: any) => ({
@@ -1351,6 +1357,16 @@ const artifactMarker = latestRaw.indexOf('```artifact');
       (ev) => {
         setWorkMode(true);  // the answer went through Work: show its panel and trace
         if (ev?.type === 'local_browser') { streamLocalRef.current = true; void runLocalBrowser(ev); return; }
+        if (hasLocalBrowser()) {
+          const cid = streamChatIdRef.current || currentChatIdRef.current;
+          if (ev?.type === 'step' && ev.status === 'run' && !String(ev.tool || '').startsWith('browser_') && ev.tool !== 'update_plan') {
+            workSay(cid, { kind: 'action', text: `${ev.label || ''}${ev.detail ? ' · ' + ev.detail : ''}` });
+          } else if (ev?.type === 'note' && ev.text) workSay(cid, { kind: 'say', text: ev.text });
+          else if (ev?.type === 'plan' && Array.isArray(ev.items)) {
+            const next = ev.items.find((x: any) => !x.done);
+            if (next?.text) workSay(cid, { kind: 'status', text: next.text });
+          }
+        }
         if (ev?.type === 'shot') {
           if (ev.img) setWorkShot({ img: ev.img, url: ev.url || '', title: ev.title, pointer: ev.pointer });
           // With the browser on this computer the page is already on screen: no side panel needed.
@@ -1410,6 +1426,44 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     catch (e: any) { result = { error: String(e?.message || e || 'local browser error').slice(0, 300) }; }
     try { await api.workLocalResult(chatId, ev.id, result || { error: 'no answer' }); } catch { /* the agent times out and says so */ }
   }, []);
+
+  // work continuity v1: what you write while Work runs goes into the job (read at its next step).
+  const workSay = useCallback((chatId: number | null | undefined, item: { kind: string; text: string }) => {
+    const bridge = (window as any).deizaDesktop;
+    if (!chatId || !item?.text || typeof bridge?.workSay !== 'function') return;
+    try { bridge.workSay(chatId, { kind: item.kind, text: String(item.text).slice(0, 500) }); } catch { /* app closed */ }
+  }, []);
+  const handleSteer = useCallback(async (text: string, target?: number) => {
+    const cid = target || currentChatIdRef.current;
+    if (!cid) return;
+    const onScreen = cid === currentChatIdRef.current;
+    const tmpId = Date.now();
+    if (onScreen) {
+      setMessages(prev => {
+        const i = prev.findIndex(m => m.id === streamingMsgIdRef.current);
+        const um: Message = { id: tmpId, role: 'user', content: text, steer: true };
+        return i < 0 ? [...prev, um] : [...prev.slice(0, i), um, ...prev.slice(i)];
+      });
+      scrollIntentRef.current = 'send';
+    }
+    try {
+      const r = await api.workSteer(cid, text);
+      if (r?.idle) {
+        // The job had just finished: the message becomes a normal one.
+        if (onScreen) { setMessages(prev => prev.filter(m => m.id !== tmpId)); handleSendRef.current?.(text); }
+        return;
+      }
+      workSay(cid, { kind: 'user', text });
+    } catch {
+      if (onScreen) { setMessages(prev => prev.filter(m => m.id !== tmpId)); setRestoredInput(text); }
+      toast.error(t('ws.err.unavailable'));
+    }
+  }, [t, workSay]);
+  useEffect(() => {
+    const bridge = (window as any).deizaDesktop;
+    if (typeof bridge?.onWorkSteer !== 'function') return;
+    return bridge.onWorkSteer((chatId: number, text: string) => { void handleSteer(text, chatId); });
+  }, [handleSteer]);
 
   const handleStop = useCallback(() => {
     // Also abort a server-side generation for this chat (covers the case where
@@ -2036,6 +2090,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
             onModelChange={setModel}
             disabled={showNameDialog}
             busy={composerBusy}
+            onSteer={workMode && composerBusy && currentChatId && !isDemoMode ? (text: string) => { void handleSteer(text); } : undefined}
             restoredValue={restoredInput}
             isDemo={isDemoMode}
             userPlan={userPlan}

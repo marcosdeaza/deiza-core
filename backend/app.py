@@ -761,6 +761,9 @@ def _auto_mode(message, chat_id, user_id):
     browser = browser or re.search(r'\b(abre|abreme|inicia|arranca|lanza|usa|utiliza|enciende|open|start|launch|use)\b[^.?!\n]{0,24}'
                                    r'\b(navegador|browser|chrome|safari|firefox)\b', f) \
         or re.search(r'\b(navega|navegame)\b', f)
+    # auto v3: playing on a website (chess.com, lichess...) is a browser job, never an HTML game built in chat
+    play = re.search(r'\b(juega|jugar|juguemos|jugamos|ponte a jugar|echa(me)? una partida|partida|play|playing)\b[^.?!\n]{0,48}'
+                     r'\b(chess|ajedrez|lichess|damas|wordle|sudoku|online|en linea|en el navegador|en la web)\b', f)
     deck = re.search(r'(presentaci|diapositiva|power ?point|pptx|\bslides\b|\bdeck\b)', f)
     deliverable = re.search(r'\b(haz|hazme|hacer|crea|creame|prepara|preparame|genera|generame|monta|disena|elabora|make|create|'
                             r'build|prepare|design)\b[^.?!\n]{0,60}(pdf|informe|dossier|guia|folleto|catalogo|revista|reportaje|'
@@ -774,7 +777,7 @@ def _auto_mode(message, chat_id, user_id):
                        r'export|convert)\b[^.?!\n]{0,70}\b(pdf|docx?|word|excel|xlsx|hoja de calculo|spreadsheet|power ?point|pptx|'
                        r'presentacion|diapositivas|informe|dossier|memoria|curriculum|\bcv\b|folleto|catalogo|factura|presupuesto|'
                        r'contrato|plantilla|documento|report|brochure|invoice|resume|template|document)\b', f)
-    if browser or deck or office or (deliverable and research):
+    if browser or deck or office or play or (deliverable and research):
         return 'work'
     if _image_only_request(f):
         return 'chat'
@@ -782,9 +785,9 @@ def _auto_mode(message, chat_id, user_id):
         try:
             from models import Chat as _ChatA
             _c = _ChatA.query.filter_by(id=chat_id, user_id=user_id).first()
-            if _c and (getattr(_c, 'mode', None) or 'chat') == 'work' and re.search(
-                    r'\b(cambia|anade|quita|pon|mueve|sustituye|corrige|ajusta|amplia|traduce|hazlo|repite|otra vez|sigue|continua|'
-                    r'change|add|remove|replace|fix|move|continue)\b', f):
+            # auto v3: a Work chat stays Work, like Code: follow-ups ("Google", "ponte a jugar", "sigue")
+            # continue the same job with the same browser instead of falling back to a chat without tools.
+            if _c and (getattr(_c, 'mode', None) or 'chat') == 'work':
                 return 'work'
         except Exception:
             pass

@@ -11,9 +11,10 @@ export const liquid5LaunchActive = (): boolean => Date.now() < new Date(LIQUID5_
 
 /**
  * Launch window for Solid 5: one-time announcement for accounts opening the workspace
- * and the "Nuevo" badge in the model list.
+ * and the "Nuevo" badge in the model list. It ended when Liquid 5.5 launched (12-oct):
+ * only the newest model carries the badge.
  */
-export const SOLID5_LAUNCH_UNTIL = '2026-10-26T23:59:59';
+export const SOLID5_LAUNCH_UNTIL = '2026-10-12T00:00:00+02:00';
 
 export const solid5LaunchActive = (): boolean => Date.now() < new Date(SOLID5_LAUNCH_UNTIL).getTime();
 

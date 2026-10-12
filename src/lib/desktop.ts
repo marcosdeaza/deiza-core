@@ -94,15 +94,15 @@ export const DESKTOP_BASE = '/downloads/desktop/';
 // Only used if latest.json can't be read. Keep it on the release that is on the server (older
 // installers are removed), or the download buttons point at missing files.
 export const FALLBACK_RELEASE: DesktopRelease = {
-  version: '1.1.16',
+  version: '1.2.1',
   files: {
-    'mac-arm64': 'Deiza-1.1.16-mac-arm64.dmg',
-    'mac-x64': 'Deiza-1.1.16-mac-x64.dmg',
-    'win-x64': 'Deiza-1.1.16-win-x64.exe',
-    'linux-deb': 'Deiza-1.1.16-linux-amd64.deb',
-    'linux-deb-arm64': 'Deiza-1.1.16-linux-arm64.deb',
-    'linux-x64': 'Deiza-1.1.16-linux-x86_64.AppImage',
-    'linux-arm64': 'Deiza-1.1.16-linux-arm64.AppImage',
+    'mac-arm64': 'Deiza-1.2.1-mac-arm64.dmg',
+    'mac-x64': 'Deiza-1.2.1-mac-x64.dmg',
+    'win-x64': 'Deiza-1.2.1-win-x64.exe',
+    'linux-deb': 'Deiza-1.2.1-linux-amd64.deb',
+    'linux-deb-arm64': 'Deiza-1.2.1-linux-arm64.deb',
+    'linux-x64': 'Deiza-1.2.1-linux-x86_64.AppImage',
+    'linux-arm64': 'Deiza-1.2.1-linux-arm64.AppImage',
   },
 };
 
