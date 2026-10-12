@@ -1,4 +1,6 @@
 const API_URL = import.meta.env.VITE_API_URL ?? '';
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_REQUEST_SIZE = 96 * 1024 * 1024;
 
 /** Server-relative asset URLs (/api/files/...) must point at the API host inside the native app. */
 export const assetUrl = (u?: string | null): string | undefined =>
@@ -40,6 +42,10 @@ function classifyHttpError(status: number, raw: string): string {
 }
 
 /** Auth header for direct fetch() calls outside APIService — keeps token-auth users working when the cookie expires */
+/** local browser v1: true inside Deiza for desktop 1.2.1+, which can drive a browser on this computer. */
+export const hasLocalBrowser = (): boolean =>
+  typeof window !== 'undefined' && typeof (window as any).deizaDesktop?.workBrowser === 'function';
+
 export const authHeaders = (): Record<string, string> => {
   const tok = localStorage.getItem('deiza:auth_token');
   return tok ? { 'X-Auth-Token': tok } : {};
@@ -187,6 +193,7 @@ class APIService {
   // Extracts the backend error reason + reset countdown from a failed stream
   // response: "KEY" | "KEY|MODEL" | "KEY|SECONDS" | "KEY|MODEL|SECONDS"
   private async buildError(resp: Response): Promise<string> {
+    if (resp.status === 413) return 'toolarge';
     try {
       const body = await resp.json();
       if (body?.error) {
@@ -274,6 +281,15 @@ class APIService {
 
   // Demo chat — no auth required, fast model only, stateless (memory in-browser only)
   /** deiza work v1: the user's own hands on the Work browser */
+  /** local browser v1: answer a browser request of a Work chat with what this computer saw. */
+  async workLocalResult(chatId: number, requestId: string, result: Record<string, any>): Promise<void> {
+    await fetch(`${this.baseUrl}/api/work/local/${chatId}/${requestId}`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ result }),
+    });
+  }
+
   async workBrowser(chatId: number, body: Record<string, any>): Promise<any> {
     const resp = await fetch(`${this.baseUrl}/api/work/browser/${chatId}`, {
       method: 'POST', credentials: 'include',
@@ -522,6 +538,8 @@ class APIService {
     onHandoff?: (handoff: { name: string; url?: string; content: string }) => void,
     /** deiza work v1: live Work events (steps, plan, files, browser frames) */
     onWork?: (ev: any) => void,
+    /** image forge v1: an image is being generated with this aspect ratio (e.g. "9:16") */
+    onImagePending?: (pending: { aspect: string; started?: number }) => void,
   ): () => void {
     const controller = new AbortController();
     let aborted = false;
@@ -546,18 +564,22 @@ class APIService {
 
     const tryStream = async () => {
       try {
+        const requestBody = JSON.stringify({
+          message, chat_id: chatId, language, files, mode, agent_type: agentType, project_id: projectId ?? undefined,
+          // Earlier Liquid generations retain Liquid tier accounting.
+          model: model === 'liquid45' || model === 'liquid51' ? 'liquid' : model,
+          model_variant: model === 'liquid45' || model === 'liquid51' ? model : undefined,
+          ...userChatPrefs(),
+          // local browser v1: Deiza for desktop runs Work's browser on this computer
+          ...(hasLocalBrowser() ? { local_browser: true } : {}),
+        });
+        // Count UTF-8 bytes, including base64 attachments and JSON overhead.
+        if (new Blob([requestBody]).size > MAX_REQUEST_SIZE) throw new Error('toolarge');
         const resp = await fetch(`${this.baseUrl}/api/chat/stream`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({
-            message, chat_id: chatId, language, files, mode, agent_type: agentType, project_id: projectId ?? undefined,
-            // Liquid 4.5 is a variant of the Liquid tier (same plan accounting)
-            // liquid 5.5 v1: earlier Liquid generations are variants of the Liquid tier (same plan accounting)
-            model: model === 'liquid45' || model === 'liquid51' ? 'liquid' : model,
-            model_variant: model === 'liquid45' || model === 'liquid51' ? model : undefined,
-            ...userChatPrefs(),
-          }),
+          body: requestBody,
           signal: controller.signal,
         });
         if (!resp.ok) throw new Error(await this.buildError(resp));
@@ -591,6 +613,7 @@ class APIService {
               if (parsed.images && onImages) onImages(parsed.images);
               if (parsed.handoff && onHandoff) onHandoff(parsed.handoff);
               if (parsed.work && onWork) onWork(parsed.work);
+              if (parsed.image_pending && onImagePending) onImagePending(parsed.image_pending);
               if (parsed.done) { completed = true; clearWatchdog(); onDone(resolvedChatId!, parsed.artifact, parsed.msg_id); return; }
             } catch (parseErr: any) {
               if (parseErr.message && !parseErr.message.includes('JSON')) throw parseErr;
@@ -638,12 +661,12 @@ class APIService {
 
   // Background generations: the task keeps running server-side even if this
   // device closed the chat — these let any device resume watching/cancel.
-  async getGenerations(): Promise<Record<string, { status: string; content: string; thinking: string; ts: number }>> {
+  async getGenerations(): Promise<Record<string, { status: string; content: string; thinking: string; ts: number; image?: { aspect: string; started?: number } }>> {
     const res = await this.request('/api/chats/generations', { method: 'GET' });
     return (res as any)?.generations || {};
   }
 
-  async getGeneration(chatId: number): Promise<{ status: string; content: string; thinking: string; ts: number } | null> {
+  async getGeneration(chatId: number): Promise<{ status: string; content: string; thinking: string; ts: number; image?: { aspect: string; started?: number } } | null> {
     try {
       const res = await this.request(`/api/chats/${chatId}/gen`, { method: 'GET' });
       if (!res || (res as any).status === 'none' || (res as any).error) return null;
@@ -700,6 +723,7 @@ class APIService {
     raw_bytes?: string;
     is_image?: boolean;
   }> {
+    if (file.size > MAX_FILE_SIZE) throw new ApiError('toolarge', undefined, 413);
     const formData = new FormData();
     formData.append('file', file);
 

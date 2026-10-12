@@ -1,5 +1,7 @@
 # API de Deiza
 
+Liquid 5.5 se activa el 12 de octubre de 2026 a las 00:00 (Europe/Madrid), también en Deiza Code y la API. Usa `deiza-liquid` para recibir automáticamente la versión activa: 5.1 hasta esa fecha y 5.5 después, con 1.048.576 tokens de contexto y razonamiento adaptativo. `deiza-liquid-5.1` conserva 5.1 (262.144 tokens); `deiza-liquid-5.5` está disponible desde el lanzamiento. Consulta `/api/v1/models` para el catálogo activo.
+
 La API de Deiza le da a tu código los mismos modelos que responden en deiza.org: **Liquid 5.1**, **Solid 5** y **Gas 4.5**. Habla el formato **OpenAI Chat Completions**, así que cualquier SDK de OpenAI o herramienta compatible funciona cambiando la URL base y la clave.
 
 | | |
@@ -24,7 +26,7 @@ curl https://deiza.org/api/v1/chat/completions \
   -H "Authorization: Bearer $DEIZA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deiza-liquid-5.1",
+    "model": "deiza-liquid",
     "messages": [
       {"role": "system", "content": "Responde breve."},
       {"role": "user", "content": "¿Qué es un transformer? En tres frases."}
@@ -41,7 +43,7 @@ from openai import OpenAI
 client = OpenAI(base_url="https://deiza.org/api/v1", api_key=os.environ["DEIZA_API_KEY"])
 
 resp = client.chat.completions.create(
-    model="deiza-liquid-5.1",
+    model="deiza-liquid",
     messages=[{"role": "user", "content": "Resume la relatividad en cinco líneas."}],
 )
 print(resp.choices[0].message.content)
@@ -55,7 +57,7 @@ import OpenAI from "openai";
 const client = new OpenAI({ baseURL: "https://deiza.org/api/v1", apiKey: process.env.DEIZA_API_KEY });
 
 const stream = await client.chat.completions.create({
-  model: "deiza-liquid-5.1",
+  model: "deiza-liquid",
   stream: true,
   messages: [{ role: "user", content: "Tres ideas de nombre para una cafetería." }],
 });
@@ -81,17 +83,20 @@ X-Api-Key: dz_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 | Modelo | Contexto | Salida máx. | Visión | Herramientas | Para qué |
 |---|---|---|---|---|---|
-| `deiza-liquid-5.1` (por defecto) | 262.144 | 32.768 | sí | sí | Equilibrado y agéntico: código, herramientas, trabajo diario |
+| `deiza-liquid-5.5` (desde el 12 de octubre) | 1.048.576 | 32.768 | sí | sí | Liquid con razonamiento adaptativo |
+| `deiza-liquid-5.1` (versión anterior) | 262.144 | 32.768 | sí | sí | Equilibrado y agéntico: código, herramientas, trabajo diario |
 | `deiza-solid-5` | 1.048.576 | 32.768 | sí | sí | Razonamiento profundo, documentos largos, arquitectura, depuración difícil |
 | `deiza-gas-4.5` | 131.072 | 32.768 | no | sí | El más rápido y barato: tareas cortas, clasificar, respuestas al momento |
 
-Los alias siguen funcionando: `deiza-liquid`, `liquid`, `deiza-omniscient` → Liquid 5.1; `deiza-solid`, `solid` → Solid 5; `deiza-gas`, `gas` → Gas 4.5. Un modelo que no existe devuelve `404 model_not_found`.
+Los alias siguen funcionando: `deiza-liquid`, `liquid`, `deiza-omniscient` → Liquid activo (5.5 desde el 12 de octubre); `deiza-solid`, `solid` → Solid 5; `deiza-gas`, `gas` → Gas 4.5. Un modelo que no existe devuelve `404 model_not_found`.
 
 `GET /models` los lista (público, sin clave):
 
 ```bash
 curl https://deiza.org/api/v1/models
 ```
+
+Ejemplo anterior al lanzamiento; el catálogo activo cambia automáticamente el 12 de octubre.
 
 ```json
 {
@@ -114,7 +119,7 @@ curl https://deiza.org/api/v1/models
 | Parámetro | Tipo | Notas |
 |---|---|---|
 | `messages` | array | Obligatorio. Roles `system`, `user`, `assistant`, `tool`. `content` es un texto o una lista de partes (`text`, `image_url`) |
-| `model` | string | Opcional, por defecto `deiza-liquid-5.1` |
+| `model` | string | Opcional, por defecto `deiza-liquid` |
 | `stream` | boolean | `true` para Server-Sent Events |
 | `max_tokens` | integer | Por defecto 16.384, máximo 32.768 |
 | `temperature` | number | De 0 a 1,5, por defecto 0,2 |
@@ -132,7 +137,7 @@ Respuesta:
   "id": "chatcmpl-360bbd1c-87aa-4bf2-9190-da6a414c48a8",
   "object": "chat.completion",
   "created": 1791074949,
-  "model": "deiza-liquid-5.1",
+  "model": "deiza-liquid",
   "choices": [
     { "index": 0, "message": { "role": "assistant", "content": "..." }, "finish_reason": "stop" }
   ],
@@ -165,7 +170,7 @@ Liquid 5.1 y Solid 5 leen imágenes. Mándalas como partes `image_url`, con una 
 
 ```json
 {
-  "model": "deiza-liquid-5.1",
+  "model": "deiza-liquid",
   "messages": [{
     "role": "user",
     "content": [
@@ -194,11 +199,11 @@ tools = [{
     },
 }]
 
-first = client.chat.completions.create(model="deiza-liquid-5.1", tools=tools,
+first = client.chat.completions.create(model="deiza-liquid", tools=tools,
     messages=[{"role": "user", "content": "¿Qué tiempo hace en Valencia?"}])
 call = first.choices[0].message.tool_calls[0]
 
-second = client.chat.completions.create(model="deiza-liquid-5.1", tools=tools, messages=[
+second = client.chat.completions.create(model="deiza-liquid", tools=tools, messages=[
     {"role": "user", "content": "¿Qué tiempo hace en Valencia?"},
     first.choices[0].message,
     {"role": "tool", "tool_call_id": call.id, "content": '{"temp_c": 24, "cielo": "despejado"}'},
@@ -304,7 +309,7 @@ Funciona todo lo que acepte un endpoint compatible con OpenAI: los SDK de OpenAI
 ```bash
 OPENAI_BASE_URL=https://deiza.org/api/v1
 OPENAI_API_KEY=dz_...
-OPENAI_MODEL=deiza-liquid-5.1
+OPENAI_MODEL=deiza-liquid
 ```
 
 La URL base anterior, `https://deiza.org/api/code`, sigue funcionando con las mismas rutas.

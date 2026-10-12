@@ -132,7 +132,7 @@ main{padding-top:20px}.top{padding:0 16px}.top nav a:not(.cta):not(.lang){displa
       <a href="/llms.txt">llms.txt</a><a href="/llms-full.txt">llms-full.txt</a><a href="/openapi.json">openapi.json</a><a href="/docs/api.es.md">api.es.md</a>
     </div>
   </aside>
-  <main>
+  <main><p class="launch-note">Liquid 5.5 se activa el 12 de octubre de 2026 a las 00:00 (Europe/Madrid), también en Deiza Code y la API. Usa <code>deiza-liquid</code> para recibir automáticamente la versión activa: 5.1 hasta esa fecha y 5.5 después, con 1.048.576 tokens de contexto y razonamiento adaptativo. <code>deiza-liquid-5.1</code> conserva 5.1 (262.144 tokens); <code>deiza-liquid-5.5</code> está disponible desde el lanzamiento. Consulta <code>/api/v1/models</code> para el catálogo activo.</p>
     <p class="kicker">Documentación · API v1</p>
     <details class="mtoc"><summary>Índice</summary><nav><a href="#inicio-rapido">Inicio rápido</a>
 <a href="#autenticacion">Autenticación</a>
@@ -185,7 +185,7 @@ curl https://deiza.org/api/v1/chat/completions \
   -H &quot;Authorization: Bearer $DEIZA_API_KEY&quot; \
   -H &quot;Content-Type: application/json&quot; \
   -d '{
-    &quot;model&quot;: &quot;deiza-liquid-5.1&quot;,
+    &quot;model&quot;: &quot;deiza-liquid&quot;,
     &quot;messages&quot;: [
       {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: &quot;Responde breve.&quot;},
       {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;¿Qué es un transformer? En tres frases.&quot;}
@@ -199,7 +199,7 @@ from openai import OpenAI
 client = OpenAI(base_url=&quot;https://deiza.org/api/v1&quot;, api_key=os.environ[&quot;DEIZA_API_KEY&quot;])
 
 resp = client.chat.completions.create(
-    model=&quot;deiza-liquid-5.1&quot;,
+    model=&quot;deiza-liquid&quot;,
     messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Resume la relatividad en cinco líneas.&quot;}],
 )
 print(resp.choices[0].message.content)
@@ -210,7 +210,7 @@ print(resp.choices[0].message.content)
 const client = new OpenAI({ baseURL: &quot;https://deiza.org/api/v1&quot;, apiKey: process.env.DEIZA_API_KEY });
 
 const stream = await client.chat.completions.create({
-  model: &quot;deiza-liquid-5.1&quot;,
+  model: &quot;deiza-liquid&quot;,
   stream: true,
   messages: [{ role: &quot;user&quot;, content: &quot;Tres ideas de nombre para una cafetería.&quot; }],
 });
@@ -242,7 +242,10 @@ X-Api-Key: dz_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 </thead>
 <tbody>
 <tr>
-<td><code>deiza-liquid-5.1</code> (por defecto)</td>
+<td><code>deiza-liquid-5.5</code> (desde el 12 de octubre)</td><td>1.048.576</td><td>32.768</td><td>sí</td><td>sí</td><td>Razonamiento adaptativo, contexto de 1M y visión</td>
+</tr>
+<tr>
+<td><code>deiza-liquid-5.1</code> (versión anterior)</td>
 <td>262.144</td>
 <td>32.768</td>
 <td>sí</td>
@@ -267,11 +270,11 @@ X-Api-Key: dz_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 </tr>
 </tbody>
 </table></div>
-<p>Los alias siguen funcionando: <code>deiza-liquid</code>, <code>liquid</code>, <code>deiza-omniscient</code> → Liquid 5.1; <code>deiza-solid</code>, <code>solid</code> → Solid 5; <code>deiza-gas</code>, <code>gas</code> → Gas 4.5. Un modelo que no existe devuelve <code>404 model_not_found</code>.</p>
+<p>Los alias siguen funcionando: <code>deiza-liquid</code>, <code>liquid</code>, <code>deiza-omniscient</code> → Liquid activo (5.5 desde el 12 de octubre); <code>deiza-solid</code>, <code>solid</code> → Solid 5; <code>deiza-gas</code>, <code>gas</code> → Gas 4.5. Un modelo que no existe devuelve <code>404 model_not_found</code>.</p>
 <p><code>GET /models</code> los lista (público, sin clave):</p>
 <div class="code"><div class="code-h"><span>bash</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-bash">curl https://deiza.org/api/v1/models
 </code></pre></div>
-<div class="code"><div class="code-h"><span>json</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-json">{
+<p>Ejemplo anterior al lanzamiento; la respuesta real cambia automáticamente el 12 de octubre.</p><div class="code"><div class="code-h"><span>json</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-json">{
   &quot;data&quot;: [
     {
       &quot;id&quot;: &quot;deiza-liquid-5.1&quot;, &quot;object&quot;: &quot;model&quot;, &quot;owned_by&quot;: &quot;deizalab&quot;,
@@ -302,7 +305,7 @@ X-Api-Key: dz_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 <tr>
 <td><code>model</code></td>
 <td>string</td>
-<td>Opcional, por defecto <code>deiza-liquid-5.1</code></td>
+<td>Opcional, por defecto <code>deiza-liquid</code></td>
 </tr>
 <tr>
 <td><code>stream</code></td>
@@ -347,7 +350,7 @@ X-Api-Key: dz_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
   &quot;id&quot;: &quot;chatcmpl-360bbd1c-87aa-4bf2-9190-da6a414c48a8&quot;,
   &quot;object&quot;: &quot;chat.completion&quot;,
   &quot;created&quot;: 1791074949,
-  &quot;model&quot;: &quot;deiza-liquid-5.1&quot;,
+  &quot;model&quot;: &quot;deiza-liquid&quot;,
   &quot;choices&quot;: [
     { &quot;index&quot;: 0, &quot;message&quot;: { &quot;role&quot;: &quot;assistant&quot;, &quot;content&quot;: &quot;...&quot; }, &quot;finish_reason&quot;: &quot;stop&quot; }
   ],
@@ -370,7 +373,7 @@ data: [DONE]
 <h3 id="vision">Visión<a class="anchor" href="#vision" title="Permanent link">#</a></h3>
 <p>Liquid 5.1 y Solid 5 leen imágenes. Mándalas como partes <code>image_url</code>, con una URL <code>https://</code> o una URL <code>data:</code>:</p>
 <div class="code"><div class="code-h"><span>json</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-json">{
-  &quot;model&quot;: &quot;deiza-liquid-5.1&quot;,
+  &quot;model&quot;: &quot;deiza-liquid&quot;,
   &quot;messages&quot;: [{
     &quot;role&quot;: &quot;user&quot;,
     &quot;content&quot;: [
@@ -395,11 +398,11 @@ data: [DONE]
     },
 }]
 
-first = client.chat.completions.create(model=&quot;deiza-liquid-5.1&quot;, tools=tools,
+first = client.chat.completions.create(model=&quot;deiza-liquid&quot;, tools=tools,
     messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;¿Qué tiempo hace en Valencia?&quot;}])
 call = first.choices[0].message.tool_calls[0]
 
-second = client.chat.completions.create(model=&quot;deiza-liquid-5.1&quot;, tools=tools, messages=[
+second = client.chat.completions.create(model=&quot;deiza-liquid&quot;, tools=tools, messages=[
     {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;¿Qué tiempo hace en Valencia?&quot;},
     first.choices[0].message,
     {&quot;role&quot;: &quot;tool&quot;, &quot;tool_call_id&quot;: call.id, &quot;content&quot;: '{&quot;temp_c&quot;: 24, &quot;cielo&quot;: &quot;despejado&quot;}'},
@@ -582,7 +585,7 @@ print(second.choices[0].message.content)
 <p>Funciona todo lo que acepte un endpoint compatible con OpenAI: los SDK de OpenAI, LangChain, LlamaIndex, Vercel AI SDK, Cursor, Continue, Cline, Aider, Open WebUI, LibreChat, n8n...</p>
 <div class="code"><div class="code-h"><span>bash</span><button class="copy" type="button" data-label="Copiar" data-done="Copiado">Copiar</button></div><pre><code class="language-bash">OPENAI_BASE_URL=https://deiza.org/api/v1
 OPENAI_API_KEY=dz_...
-OPENAI_MODEL=deiza-liquid-5.1
+OPENAI_MODEL=deiza-liquid
 </code></pre></div>
 <p>La URL base anterior, <code>https://deiza.org/api/code</code>, sigue funcionando con las mismas rutas.</p>
 <h2 id="para-ias-y-rastreadores">Para IAs y rastreadores<a class="anchor" href="#para-ias-y-rastreadores" title="Permanent link">#</a></h2>

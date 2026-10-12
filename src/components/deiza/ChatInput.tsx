@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { ArrowUp, Plus, X, Square, FileText, Check, Briefcase } from 'lucide-react';
+import { ArrowUp, Plus, X, Square, FileText, Check, Briefcase, AppWindow } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '@/contexts/LanguageContext';
 import ModelSelector, { type ModelKey, type Effort } from './ModelSelector';
@@ -37,6 +37,8 @@ interface ChatInputProps {
   mode?: ChatMode;
   onModeChange?: (m: ChatMode) => void;
   leftSlot?: React.ReactNode;
+  /** Work chats only: show or hide the computer panel (browser and files) */
+  workPanel?: { open: boolean; label: string; onToggle: () => void };
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -47,13 +49,14 @@ const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(
 const ChatInput = ({
   onSend, onStop, model, onModelChange,
   disabled, busy, restoredValue, isDemo, userPlan = 'free', onUpgradeClick,
-  variant = 'dock', onDraftChange, placeholder, effort, onEffortChange, mode, onModeChange, leftSlot,
+  variant = 'dock', onDraftChange, placeholder, effort, onEffortChange, mode, onModeChange, leftSlot, workPanel,
 }: ChatInputProps) => {
   const { t } = useLanguage();
   const { trigger: haptic } = useHaptics();
   const [value, setValue] = useState('');
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [pendingUploads, setPendingUploads] = useState(0);
+  const uploading = pendingUploads > 0;
   const [isDragging, setIsDragging] = useState(false);
   const [focused, setFocused] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
@@ -218,7 +221,7 @@ const ChatInput = ({
       toast.error(t('ci.err.size'));
       return;
     }
-    setUploading(true);
+    setPendingUploads(count => count + 1);
     try {
       const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|heic)$/i.test(file.name);
       if (isImage) {
@@ -256,7 +259,7 @@ const ChatInput = ({
       haptic('error');
       toast.error(apiErrorMessage(err, t, t('ci.err.upload')));
     } finally {
-      setUploading(false);
+      setPendingUploads(count => Math.max(0, count - 1));
     }
   };
 
@@ -607,6 +610,19 @@ const ChatInput = ({
                 ? <span className="w-4 h-4 rounded-full border-2 border-primary/30 border-t-primary animate-spin" aria-hidden="true" />
                 : <Plus className="w-5 h-5" strokeWidth={1.75} />}
             </motion.button>
+            {workPanel && (
+              <motion.button
+                onClick={() => { haptic('light'); workPanel.onToggle(); }}
+                className={`flex items-center justify-center w-9 h-9 rounded-full transition-colors focus-ring shrink-0 ${workPanel.open
+                  ? 'text-primary bg-primary/10 hover:bg-primary/15' : 'text-muted-foreground/70 hover:text-foreground hover:bg-muted/70'}`}
+                title={workPanel.label}
+                aria-label={workPanel.label}
+                aria-pressed={workPanel.open}
+                whileTap={{ scale: 0.9 }}
+              >
+                <AppWindow className="w-[18px] h-[18px]" strokeWidth={1.75} />
+              </motion.button>
+            )}
 
           </div>
 

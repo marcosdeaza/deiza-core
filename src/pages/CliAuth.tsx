@@ -1,3 +1,4 @@
+import { useLiquid55Live } from '@/lib/launch';
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -16,6 +17,7 @@ import { toast } from 'sonner';
  * shows the result, keeping the key visible for manual paste (SSH, remote desktops...).
  */
 export default function CliAuth() {
+  const live55 = useLiquid55Live();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user, isAuthenticated, loading: authLoading } = useAuth();
@@ -165,7 +167,7 @@ export default function CliAuth() {
             </div>
             <div className="pt-2 border-t border-border/30 flex items-center justify-between text-[11px] font-mono text-muted-foreground">
               <span>Motor asignado:</span>
-              <span className="text-primary font-medium">Deiza Code · Liquid 5.1 · Solid 5 · Gas</span>
+              <span className="text-primary font-medium">Deiza Code · Liquid {live55 ? '5.5' : '5.1'} · Solid 5 · Gas</span>
             </div>
           </div>
         )}
@@ -176,7 +178,7 @@ export default function CliAuth() {
               <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" /> Acceso General Habilitado
             </p>
             <p className="font-body text-xs text-muted-foreground leading-relaxed">
-              Tu cuenta tiene acceso a Deiza Code con Liquid 5.1, Solid 5 y Gas 4.5.
+              Tu cuenta tiene acceso a Deiza Code con Liquid {live55 ? '5.5' : '5.1'}, Solid 5 y Gas 4.5.
             </p>
           </div>
         )}

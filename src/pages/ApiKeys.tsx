@@ -11,15 +11,17 @@ import { api, authHeaders, type CodeKey } from '@/services/api';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { countdownLabel, resetDateLabel, secondsUntil } from '@/lib/usageReset';
+import { useLiquid55Live } from '@/lib/launch';
 import { haptic, isNative } from '@/lib/native';
 
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 const BASE = 'https://deiza.org/api/v1';
 const DOCS = 'https://deiza.org/docs/';
-const MODELS = [
-  { id: 'deiza-liquid-5.1', note: 'default' },
+const apiModels = (live55: boolean) => [
+  { id: live55 ? 'deiza-liquid-5.5' : 'deiza-liquid-5.1', note: 'default' },
   { id: 'deiza-solid-5', note: '1M' },
   { id: 'deiza-gas-4.5', note: 'fast' },
+  ...(live55 ? [{ id: 'deiza-liquid-5.1', note: 'legacy' }] : []),
 ];
 const EXPIRY = [0, 7, 30, 90, 365] as const;
 
@@ -31,14 +33,14 @@ function snippet(kind: Snip, key: string) {
     return `curl ${BASE}/chat/completions \\
   -H "Authorization: Bearer ${k}" \\
   -H "Content-Type: application/json" \\
-  -d '{"model": "deiza-liquid-5.1", "messages": [{"role": "user", "content": "Hola"}]}'`;
+  -d '{"model": "deiza-liquid", "messages": [{"role": "user", "content": "Hola"}]}'`;
   }
   if (kind === 'python') {
     return `from openai import OpenAI
 
 client = OpenAI(base_url="${BASE}", api_key="${key || 'dz_...'}")
 resp = client.chat.completions.create(
-    model="deiza-liquid-5.1",
+    model="deiza-liquid",
     messages=[{"role": "user", "content": "Hola"}],
 )
 print(resp.choices[0].message.content)`;
@@ -48,14 +50,14 @@ print(resp.choices[0].message.content)`;
 
 const client = new OpenAI({ baseURL: "${BASE}", apiKey: "${key || 'dz_...'}" });
 const resp = await client.chat.completions.create({
-  model: "deiza-liquid-5.1",
+  model: "deiza-liquid",
   messages: [{ role: "user", content: "Hola" }],
 });
 console.log(resp.choices[0].message.content);`;
   }
   return `OPENAI_BASE_URL=${BASE}
 OPENAI_API_KEY=${key || 'dz_...'}
-OPENAI_MODEL=deiza-liquid-5.1`;
+OPENAI_MODEL=deiza-liquid`;
 }
 
 const CopyBtn = ({ text, label, done, className = '' }: { text: string; label?: string; done?: string; className?: string }) => {
@@ -103,6 +105,7 @@ interface Usage {
 
 /** /api-keys: the API console. Keys with name, origin, last use, requests and expiry; quick start; plan usage. */
 const ApiKeys = () => {
+  const live55 = useLiquid55Live();
   const navigate = useNavigate();
   const { isAuthenticated, loading: authLoading } = useAuth();
   const { language, t } = useLanguage();
@@ -319,7 +322,7 @@ const ApiKeys = () => {
             </div>
             <p className="mt-5 font-body text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/55">{t('ak.models')}</p>
             <ul className="mt-2 space-y-1.5">
-              {MODELS.map(m => (
+              {apiModels(live55).map(m => (
                 <li key={m.id} className="flex items-center gap-2">
                   <code className="font-mono text-[12.5px] text-primary">{m.id}</code>
                   <span className="font-body text-[11.5px] text-muted-foreground/70">{t(`ak.model.${m.note}`)}</span>

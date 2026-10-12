@@ -60,9 +60,36 @@ def register_work(app, auth_decorator):
             args['dy'] = int(data.get('dy') or 600)
         elif action == 'status':
             args['shot'] = True
+        # The user's own actions only need the new picture: no element list, short settle.
+        args['light'] = True
+        vp = data.get('viewport') or {}
+        try:
+            if vp.get('w') and vp.get('h'):
+                args['viewport'] = {'w': int(vp['w']), 'h': int(vp['h'])}
+        except (TypeError, ValueError):
+            pass
         try:
             st = work_agent.browser(work_agent.session_id(uid, chat_id), action, **args)
         except Exception as e:  # noqa: BLE001
             logger.warning('work browser action %s failed: %s', action, e)
             return jsonify({'error': 'browser_unavailable'}), 503
         return jsonify(st)
+
+    @app.route('/api/work/local/<int:chat_id>/<rid>', methods=['POST'])
+    @auth_decorator
+    def work_local_browser_result(chat_id, rid):
+        """local browser v1: Deiza for desktop answers a browser request of this chat's agent."""
+        import work_agent
+        uid = session.get('user_id')
+        if request.content_length and request.content_length > 8 * 1024 * 1024:
+            return jsonify({'error': 'too_large'}), 413
+        data = request.get_json(silent=True) or {}
+        result = data.get('result')
+        if not isinstance(result, dict):
+            return jsonify({'error': 'bad_result'}), 400
+        keep = {k: result[k] for k in ('url', 'title', 'shot', 'w', 'h', 'elements', 'text', 'links', 'imgs', 'error') if k in result}
+        if isinstance(keep.get('shot'), str) and len(keep['shot']) > 6 * 1024 * 1024:
+            keep.pop('shot')
+        if not work_agent.local_browser_result(uid, chat_id, rid, keep):
+            return jsonify({'error': 'unknown_request'}), 404
+        return jsonify({'ok': True})

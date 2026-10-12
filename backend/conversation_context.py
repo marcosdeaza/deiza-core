@@ -125,6 +125,10 @@ def fit_messages(messages, budget):
     return out
 
 
-def chat_silence_timeout(model):
-    """Allow deep reasoning to finish; observed Solid replies can take over 90 s."""
-    return 180 if model in ('solid', 'ultra') else 90
+def chat_silence_timeout(model, liquid55=False, variant=None):
+    """Allow the current deep-reasoning engines to finish before silence recovery."""
+    if model in ('solid', 'ultra'):
+        return 180
+    if liquid55 and model in ('liquid', 'pro') and variant not in ('liquid51', 'liquid45'):
+        return 180
+    return 90

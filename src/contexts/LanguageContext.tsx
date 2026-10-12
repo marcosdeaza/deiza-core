@@ -126,7 +126,7 @@ export const LanguageProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const t = useCallback((key: string, params?: Record<string, string | number>): string => {
-    if (live55 && ['pl.free.f1', 'pl.friend.f1', 'an.try', 'st.news.desc', 'st.chain.on'].includes(key)) key += '.l55';
+    if (live55 && (es as Dict)[key + '.l55']) key += '.l55';
     const dict = cache[language];
     let value = (dict && dict[key]) ?? (en as Dict)[key] ?? (es as Dict)[key] ?? key;
     if (params) {

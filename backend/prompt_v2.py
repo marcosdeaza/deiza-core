@@ -360,7 +360,7 @@ def build_base_prompt(old_prompt: str, language: str, model_key: str, variant: s
     liquid = {'liquid45': 'Liquid 4.5', 'liquid51': 'Liquid 5.1'}.get(variant, now)
     lineup = f'{now} (y {prev}, la generación anterior)' if lang == 'es' else f'{now} (and {prev}, the previous generation)'
     release = ('Liquid 5.5 ya está disponible en el chat y Work, en todos los planes, incluido el gratuito. Liquid 5.1 sigue en Más modelos.' if live55 else 'Liquid 5.5 llega el 12 de octubre de 2026 al chat y Work, en todos los planes, incluido el gratuito. Hasta entonces Liquid 5.1 sigue siendo el Liquid activo.') if lang == 'es' else ('Liquid 5.5 is now available in chat and Work on every plan, including free. Liquid 5.1 remains in More models.' if live55 else 'Liquid 5.5 arrives on October 12, 2026 in chat and Work on every plan, including free. Until then Liquid 5.1 remains the active Liquid.')
-    release += '\n' + ('Menciona este lanzamiento solo si el usuario pregunta. Deiza Code y la API siguen con Liquid 5.1.' if lang == 'es' else 'Mention this release only if the user asks. Deiza Code and the API remain on Liquid 5.1.')
+    release += '\n' + ('Menciona este lanzamiento solo si el usuario pregunta. Deiza Code y la API adoptan Liquid 5.5 en la misma fecha; Liquid 5.1 sigue disponible con su identificador de versión.' if lang == 'es' else 'Mention this release only if the user asks. Deiza Code and the API adopt Liquid 5.5 on the same date; Liquid 5.1 remains available under its versioned identifier.')
     parts = [CORE[lang], TIERS[lang][tier].replace('{liquid}', liquid).replace('{lineup}', lineup).replace('{liquid_now}', now) + '\n' + release]
     for t in topics(message, history_text, has_files):
         parts.append(MODULES[lang][t])

@@ -41,6 +41,8 @@ export interface WorkShot {
   img: string;
   url: string;
   title?: string;
+  /** browser fit v1: where the agent last clicked or dragged, in page pixels */
+  pointer?: { x: number; y: number };
 }
 
 export const emptyWork = (): WorkState => ({ items: [], files: [], startedAt: Date.now() });

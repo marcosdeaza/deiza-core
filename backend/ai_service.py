@@ -1529,13 +1529,64 @@ Your sole mission is to analyze data, create charts, tables, dashboards, and ext
 
     IMAGE_MODEL = os.getenv('IMAGE_MODEL', '').strip()
     IMAGE_FALLBACK_MODEL = os.getenv('IMAGE_FALLBACK_MODEL', '').strip() or IMAGE_MODEL
+    # image forge v1: the shape is decided before generating, so the chat can draw the
+    # placeholder with the exact proportions of the image that is coming.
+    IMAGE_ASPECTS = {'1:1': 1.0, '2:3': 2 / 3, '3:2': 1.5, '3:4': 0.75, '4:3': 4 / 3, '4:5': 0.8,
+                     '5:4': 1.25, '9:16': 9 / 16, '16:9': 16 / 9, '21:9': 21 / 9}
 
-    def generate_image(self, prompt: str, files: List[Dict] = None, language: str = 'es') -> Optional[Dict]:
+    def _nearest_aspect(self, ratio: float) -> str:
+        import math
+        return min(self.IMAGE_ASPECTS, key=lambda k: abs(math.log(self.IMAGE_ASPECTS[k] / ratio)))
+
+    def image_aspect(self, prompt: str, files: List[Dict] = None) -> str:
+        """Aspect ratio for an image request: the photo being edited keeps its shape; otherwise
+        an explicit ratio or size, then the format the request names (story, poster, banner...)."""
+        for f in (files or []):
+            raw, mime = f.get('raw_bytes'), f.get('mime_type', '') or ''
+            if raw and mime.startswith('image/'):
+                try:
+                    import io as _io
+                    from PIL import Image as _Img
+                    w, h = _Img.open(_io.BytesIO(base64.b64decode(raw))).size
+                    if w and h:
+                        return self._nearest_aspect(w / h)
+                except Exception:
+                    pass
+        import unicodedata
+        t = ''.join(c for c in unicodedata.normalize('NFKD', (prompt or '').lower()) if not unicodedata.combining(c))
+        m = re.search(r'\b(\d{3,5})\s*[x×*]\s*(\d{3,5})\b', t)
+        if m and int(m.group(1)) and int(m.group(2)):
+            return self._nearest_aspect(int(m.group(1)) / int(m.group(2)))
+        m = re.search(r'\b(1|2|3|4|5|9|16|21)\s*[:/]\s*(1|2|3|4|5|9|16)\b', t)
+        if m and f'{m.group(1)}:{m.group(2)}' in self.IMAGE_ASPECTS:
+            return f'{m.group(1)}:{m.group(2)}'
+        rules = [
+            ('9:16', r'\b(stor(y|ies)|historias? de (instagram|ig)|reels?|tiktok|shorts?|vertical|lock ?screen|'
+                     r'(fondo de pantalla|wallpaper)\s+(del?|para (el|mi)?)\s*(movil|telefono|celular|iphone|android|phone)|pantalla del? movil)\b'),
+            ('21:9', r'\b(ultra ?panoramic\w*|ultrawide|cinemascope|anamorfic\w*)\b'),
+            ('1:1', r'\b(logo\w*|icono|icon|app icon|avatar|foto de perfil|pfp|sticker|pegatina|emoji|caratula|'
+                    r'portada de (album|disco|playlist)|album cover|cuadrad[ao]|square)\b'),
+            ('3:4', r'\b(cartel|poster|flyer|folleto|afiche|invitacion|portada de (libro|revista|novela)|book cover|magazine cover)\b'),
+            ('4:5', r'\b(retrato|portrait|selfie|post de (instagram|ig)|publicacion de (instagram|ig)|instagram post)\b'),
+            ('16:9', r'\b(horizontal|panoramic\w*|paisaje|landscape|banner|cabecera|header|portada de youtube|miniatura|'
+                     r'thumbnail|fondo de escritorio|wallpaper|fondo de pantalla|escritorio|desktop|cinematografic\w*|cinematic|'
+                     r'widescreen|diapositiva|slide)\b'),
+        ]
+        for aspect, pattern in rules:
+            if re.search(pattern, t):
+                return aspect
+        return '1:1'
+
+    def generate_image(self, prompt: str, files: List[Dict] = None, language: str = 'es', aspect: Optional[str] = None) -> Optional[Dict]:
         """Generate or edit an image with the configured image model.
         Attached photos (raw base64) are passed as inputs so the model can edit them.
-        Returns {'data_url', 'mime', 'text'} or None on failure."""
+        `aspect` (one of IMAGE_ASPECTS) fixes the output shape.
+        Returns {'data_url', 'mime', 'text', 'aspect'} or None on failure; a refusal of the
+        provider's content policy comes back as {'data_url': None, 'text': ..., 'blocked': True}."""
         import urllib.request
         import urllib.error
+        if aspect not in self.IMAGE_ASPECTS:
+            aspect = None
         try:
             parts = []
             for f in (files or []):
@@ -1550,9 +1601,12 @@ Your sole mission is to analyze data, create charts, tables, dashboards, and ext
                 if extra_text:
                     pl_parts = pl_parts[:-1] + [{'text': extra_text + '\n\n' + prompt}]
                 u, h = _model_request(model_name, 'generateContent', 'IMAGE_API_URL')
+                gen_cfg = {'responseModalities': ['TEXT', 'IMAGE']}
+                if aspect:
+                    gen_cfg['imageConfig'] = {'aspectRatio': aspect}
                 payload = {
                     'contents': [{'role': 'user', 'parts': pl_parts}],
-                    'generationConfig': {'responseModalities': ['TEXT', 'IMAGE']},
+                    'generationConfig': gen_cfg,
                     'safetySettings': SAFETY_UNRESTRICTED,
                 }
                 req = urllib.request.Request(u, data=json.dumps(payload).encode(), headers=h, method='POST')
@@ -1561,8 +1615,10 @@ Your sole mission is to analyze data, create charts, tables, dashboards, and ext
                         return json.loads(resp.read())
                 except urllib.error.HTTPError as e:
                     body = e.read().decode(errors='ignore')
-                    if e.code == 400 and 'safety' in body.lower():
+                    if e.code == 400 and ('safety' in body.lower() or 'imageconfig' in body.lower() or 'aspect' in body.lower()):
                         payload.pop('safetySettings', None)
+                        if 'safety' not in body.lower():
+                            payload['generationConfig'].pop('imageConfig', None)
                         req = urllib.request.Request(u, data=json.dumps(payload).encode(), headers=h, method='POST')
                         with urllib.request.urlopen(req, timeout=timeout) as resp:
                             return json.loads(resp.read())
@@ -1592,9 +1648,20 @@ Your sole mission is to analyze data, create charts, tables, dashboards, and ext
                 img, text, reason = _extract(_call(model_name, extra))
                 if img:
                     mime = img.get('mimeType') or img.get('mime_type') or 'image/png'
-                    return {'data_url': f"data:{mime};base64,{img['data']}", 'mime': mime, 'text': text}
+                    return {'data_url': f"data:{mime};base64,{img['data']}", 'mime': mime, 'text': text, 'aspect': aspect}
                 last_text = text or last_text
                 logger.warning(f'Image model {model_name} returned no image part (finish={reason}, text={text[:120]!r})')
+                if 'PROHIBITED' in (reason or '') or 'SAFETY' in (reason or '') or reason in ('IMAGE_RECITATION', 'RECITATION'):
+                    # The provider's own policy (real people, explicit content, logos it protects...):
+                    # repeating the same request only makes the user wait three times as long.
+                    es = (language or 'es').startswith('es')
+                    msg = ('Deiza Image no puede crear esta imagen tal y como está pedida (el filtro de contenido bloquea, por ejemplo, '
+                           'personas reales reconocibles, contenido explícito o marcas protegidas). Cuéntame la idea de otra '
+                           'forma, sin nombres propios, y la hago.' if es else
+                           'Deiza Image cannot create this image as requested (the content filter blocks, for example, recognisable '
+                           'real people, explicit content or protected brands). Describe the idea another way, without '
+                           'proper names, and I will make it.')
+                    return {'data_url': None, 'mime': None, 'text': last_text or msg, 'blocked': True}
             # Nothing drawable after three tries: hand the model's own words back (a question or a refusal)
             if last_text:
                 return {'data_url': None, 'mime': None, 'text': last_text}

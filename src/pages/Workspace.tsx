@@ -24,6 +24,7 @@ import ChatInput from '@/components/deiza/ChatInput';
 import ArtifactPanel from '@/components/deiza/ArtifactPanel';
 import WorkTrace from '@/components/deiza/WorkTrace';
 import WorkPanel from '@/components/deiza/WorkPanel';
+import { hasLocalBrowser } from '@/services/api';
 import { ProjectMenu, type ChatMode } from '@/components/deiza/BarMenu';
 import type { Effort } from '@/components/deiza/ModelSelector';
 import { applyWorkEvent, workFromMeta, type WorkState, type WorkShot } from '@/lib/workTypes';
@@ -62,10 +63,13 @@ interface Message {
   /** Inline error card (kept in the thread so the user's message never vanishes) */
   error?: boolean;
   retryOf?: string;
+  retryFiles?: Array<{ name: string; mime_type?: string; is_image?: boolean; raw_bytes?: string; content?: string }>;
   /** The user pressed Stop: partial answer kept */
   stopped?: boolean;
   /** Loaded from the server (chat switch / refresh): shown at once, no entry animation */
   fromHistory?: boolean;
+  /** image forge v1: an image is being generated for this answer (aspect fixed by the server) */
+  imagePending?: { aspect: string; started?: number };
 }
 
 const DEMO_MAX_MESSAGES = 5;
@@ -231,6 +235,8 @@ const Workspace = () => {
   });
   const setEffort = (e: Effort) => { setEffortState(e); try { localStorage.setItem('deiza:effort', e); } catch {} };
   const [workPanelOpen, setWorkPanelOpen] = useState(false);
+  // browser fit v1: the computer panel can take the whole window
+  const [workMax, setWorkMax] = useState(false);
   const [workShot, setWorkShot] = useState<WorkShot | null>(null);
   const workPanelDismissedRef = useRef(false);
   const setModel = (newModel: ModelKey) => {
@@ -300,8 +306,16 @@ const Workspace = () => {
   // Tasks keep running server-side even if this device closed the chat / laptop
   // slept: the sidebar + message area resume watching live, and stop cancels it.
   const remoteGensRef = useRef<Record<string, { status: string; content: string; thinking: string; ts: number }>>({});
-  const [remoteGenDetail, setRemoteGenDetail] = useState<{ status: string; content: string; thinking: string; ts: number } | null>(null);
-  const remoteGenDetailRef = useRef<{ status: string; content: string; thinking: string; ts: number } | null>(null);
+  const [remoteGenDetail, setRemoteGenDetail] = useState<{ status: string; content: string; thinking: string; ts: number; image?: { aspect: string; started?: number } } | null>(null);
+  const remoteGenDetailRef = useRef<{ status: string; content: string; thinking: string; ts: number; image?: { aspect: string; started?: number } } | null>(null);
+  // image forge v1: the chat whose answer this device is streaming right now, and whether the
+  // next reload must reveal (not just show) an image that finished in the background.
+  const streamChatIdRef = useRef<number | null>(null);
+  const revealImageRef = useRef(false);
+  // local browser v1: a Work answer that drives this computer's browser stays attached when you
+  // switch chats (its requests come through this stream); back on it, the thread reloads at the end.
+  const streamLocalRef = useRef(false);
+  const streamVisibleRef = useRef(true);
   const [editingChatId, setEditingChatId] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   // Mobile long-press action sheet for a chat (rename / delete)
@@ -671,6 +685,11 @@ const Workspace = () => {
           fromHistory: true,
         };
       });
+      if (revealImageRef.current) {
+        revealImageRef.current = false;
+        const last = mapped[mapped.length - 1];
+        if (last && last.role === 'assistant' && last.artifact?.type === 'image') last.fromHistory = false;
+      }
       scrollIntentRef.current = 'load';
       setMessages(mapped);
       setCurrentChatId(cid);
@@ -731,7 +750,7 @@ const Workspace = () => {
           }
         }
         const gen = cid ? gens[String(cid)] : undefined;
-        if (cid && gen && !isStreamingRef.current) {
+        if (cid && gen && (!isStreamingRef.current || streamChatIdRef.current !== cid)) {
           const detail = await api.getGeneration(cid);
           if (!alive) return;
           if (detail && detail.status === 'generating') {
@@ -744,6 +763,7 @@ const Workspace = () => {
             }
           } else {
             // Finished / cancelled — the final message is in the DB now. Reload thread
+            if (remoteGenDetailRef.current?.image) revealImageRef.current = true;
             remoteGenDetailRef.current = null;
             setRemoteGenDetail(null);
             if (showedRemoteRef.current && currentChatIdRef.current) {
@@ -753,7 +773,10 @@ const Workspace = () => {
               if (currentChatIdRef.current) markProcessing(currentChatIdRef.current, false);
             }
           }
-        } else if (remoteGenDetailRef.current) {
+        } else if (remoteGenDetailRef.current && !gen) {
+          // The server finished it. (A generation still running while this device also streams
+          // another answer is NOT finished: clearing it here hid images that were on their way.)
+          if (remoteGenDetailRef.current.image) revealImageRef.current = true;
           remoteGenDetailRef.current = null;
           setRemoteGenDetail(null);
           if (showedRemoteRef.current && currentChatIdRef.current) {
@@ -1138,6 +1161,9 @@ const artifactMarker = latestRaw.indexOf('```artifact');
 
     // Mark this chat as actively processing (sidebar spinner)
     if (currentChatId) markProcessing(currentChatId, true);
+    streamChatIdRef.current = currentChatId ?? null;
+    streamLocalRef.current = false;
+    streamVisibleRef.current = true;
     cancelStreamRef.current = api.streamMessage(
       content, currentChatId, model, language,
       (chunk) => { handleStreamChunk(chunk, streamingId); },
@@ -1159,9 +1185,15 @@ const artifactMarker = latestRaw.indexOf('```artifact');
         const finalArtifact = artifact || streamingArtifactRef.current || undefined;
         setMessages(prev => prev.map(m =>
           m.id === streamingId
-            ? { ...m, id: msgId || streamingId, content: finalContent || m.content, artifact: finalArtifact }
+            ? { ...m, id: msgId || streamingId, content: finalContent || m.content, artifact: finalArtifact, imagePending: undefined }
             : m
         ));
+        if (!streamVisibleRef.current) {
+          streamVisibleRef.current = true;
+          if (currentChatIdRef.current === (currentChatId || newChatId)) void refreshCurrentMessages();
+        }
+        streamChatIdRef.current = null;
+        streamLocalRef.current = false;
         // Auto-open artifact panel when artifact arrives (images render inline + lightbox instead;
         // file-download artifacts like .pptx just show their download card)
         if (finalArtifact && finalArtifact.type !== 'image' && finalArtifact.type !== 'question' && !finalArtifact.name?.endsWith('.question') && finalArtifact.content) {
@@ -1270,7 +1302,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
           // Keep the user's message in the thread and offer a one-tap retry
           setMessages(prev => [
             ...prev.filter(m => m.id !== streamingId),
-            { id: Date.now(), role: 'assistant', content: userFriendly, error: true, retryOf: content },
+            { id: Date.now(), role: 'assistant', content: userFriendly, error: true, retryOf: finalContent, retryFiles: files },
           ]);
         }
         lastLocalDoneRef.current = Date.now();
@@ -1304,6 +1336,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
         // A brand-new chat: bind it to the URL right away so an F5 mid-answer restores this
         // thread (and the background-generation poller can attach) instead of an empty screen.
         currentChatIdRef.current = newId;
+        streamChatIdRef.current = newId;
         setCurrentChatId(newId);
         setSearchParams({ chat: String(newId) }, { replace: true });
         try { localStorage.setItem('deiza:activeChatId', String(newId)); } catch {}
@@ -1317,13 +1350,21 @@ const artifactMarker = latestRaw.indexOf('```artifact');
       },
       (ev) => {
         setWorkMode(true);  // the answer went through Work: show its panel and trace
+        if (ev?.type === 'local_browser') { streamLocalRef.current = true; void runLocalBrowser(ev); return; }
         if (ev?.type === 'shot') {
-          if (ev.img) setWorkShot({ img: ev.img, url: ev.url || '', title: ev.title });
-          if (!isMobile && !workPanelDismissedRef.current) setWorkPanelOpen(true);
+          if (ev.img) setWorkShot({ img: ev.img, url: ev.url || '', title: ev.title, pointer: ev.pointer });
+          // With the browser on this computer the page is already on screen: no side panel needed.
+          if (!isMobile && !workPanelDismissedRef.current && !hasLocalBrowser()) setWorkPanelOpen(true);
         }
         if (ev?.type === 'shot' && !ev.url) return;
         setMessages(prev => prev.map(m =>
           m.id === streamingId ? { ...m, work: applyWorkEvent(m.work, ev) } : m
+        ));
+      },
+      (pending) => {
+        // image forge v1: the image's shape is known; its frame starts painting right away
+        setMessages(prev => prev.map(m =>
+          m.id === streamingId ? { ...m, imagePending: { aspect: pending.aspect, started: pending.started } } : m
         ));
       },
     );
@@ -1341,6 +1382,34 @@ const artifactMarker = latestRaw.indexOf('```artifact');
   };
 
   handleSendRef.current = handleSend;
+
+  // image forge v1: leaving a chat while its answer streams hands it to the server (it keeps
+  // generating and saves the result); back on that chat, the background poller shows it live.
+  // Keeping the old stream attached made its updates land nowhere and hid images on their way.
+  const detachLocalStream = useCallback((nextChatId: number | null) => {
+    if (!isStreamingRef.current) return;
+    if (nextChatId != null && streamChatIdRef.current === nextChatId) return;
+    if (streamLocalRef.current) { streamVisibleRef.current = false; return; }
+    if (cancelStreamRef.current) { cancelStreamRef.current(); cancelStreamRef.current = null; }
+    if (streamingThrottleRef.current) { clearTimeout(streamingThrottleRef.current); streamingThrottleRef.current = null; }
+    isStreamingRef.current = false;
+    streamingMsgIdRef.current = null;
+    streamChatIdRef.current = null;
+    lastLocalDoneRef.current = 0;
+    setIsLoading(false);
+    setStreamingThinkingSteps([]);
+  }, []);
+
+  // local browser v1: Work's agent asked this computer's browser for an action; run it and answer.
+  const runLocalBrowser = useCallback(async (ev: any) => {
+    const bridge = (window as any).deizaDesktop;
+    const chatId = Number(ev?.chat_id);
+    if (!bridge?.workBrowser || !chatId || !ev?.id) return;
+    let result: any;
+    try { result = await bridge.workBrowser({ chatId, action: ev.action, args: ev.args || {} }); }
+    catch (e: any) { result = { error: String(e?.message || e || 'local browser error').slice(0, 300) }; }
+    try { await api.workLocalResult(chatId, ev.id, result || { error: 'no answer' }); } catch { /* the agent times out and says so */ }
+  }, []);
 
   const handleStop = useCallback(() => {
     // Also abort a server-side generation for this chat (covers the case where
@@ -1447,6 +1516,16 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     }
   };
 
+  // local browser v1: "Detener" in the desktop browser's toolbar stops the Work job driving it.
+  useEffect(() => {
+    const bridge = (window as any).deizaDesktop;
+    if (typeof bridge?.onWorkStop !== 'function') return;
+    return bridge.onWorkStop((chatId: number) => {
+      if (currentChatIdRef.current === chatId && isStreamingRef.current) handleStop();
+      else api.cancelGeneration(chatId);
+    });
+  }, [handleStop]);
+
   const handleLogout = async () => {
     try { await logout(); navigate(isNative() ? '/login' : '/'); }
     catch { toast.error(t('workspace.logout')); }
@@ -1454,6 +1533,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
 
   const handleNewChat = () => {
     haptic('light');
+    detachLocalStream(null);
     try { localStorage.removeItem('deiza:activeChatId'); } catch {}
     currentChatIdRef.current = null;
     remoteGenDetailRef.current = null;
@@ -1538,6 +1618,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
   const handleChatSelect = async (chatId: number) => {
     if (chatId === currentChatId && messages.length > 0) { if (isMobile) setSidebarOpen(false); return; }
     haptic('selection');
+    detachLocalStream(chatId);
     if (isMobile) setSidebarOpen(false);
     // Persist chat in URL and localStorage so F5 / refresh stays on this chat
     currentChatIdRef.current = chatId;
@@ -1727,7 +1808,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
    * bottom spacer collapses on the first message and the composer glides down
    * to its dock (framer `layout` animation).
    */
-  const workSide = workMode && workPanelOpen && !!currentChatId;
+  const workSide = workMode && workPanelOpen && !!currentChatId && !workMax;
   const sidePanel = (artifactOpen || workSide) && !isMobile;
   const workFiles = messages.flatMap(m => m.work?.files || []);  // plain value: hooks cannot live after the early returns above
   const renderThread = (inPanel: boolean) => {
@@ -1784,7 +1865,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                               const lastUser = [...before].reverse().find(m => m.role === 'user' && m.content === again);
                               return before.filter(m => m !== lastUser);
                             });
-                            setTimeout(() => handleSend(again), 0);
+                            setTimeout(() => handleSend(again, msg.retryFiles || []), 0);
                           }}
                           className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-card border border-border/40 hover:border-primary/40 font-body text-[12.5px] text-foreground/85 transition-colors focus-ring"
                         >
@@ -1801,6 +1882,12 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                     <WorkTrace work={msg.work} live thinking={streamingThinkingSteps[streamingThinkingSteps.length - 1]}
                       onOpenComputer={workSide ? undefined : () => setWorkPanelOpen(true)} />
                   </div>
+                );
+              }
+              if (isStreamingMsg && msg.content === '' && !msg.artifact && msg.imagePending) {
+                return (
+                  <ChatMessage key={msg.id} role="ai" content="" isStreaming
+                    imagePending={{ ...msg.imagePending, label: streamingThinkingSteps[streamingThinkingSteps.length - 1] }} />
                 );
               }
               if (isStreamingMsg && msg.content === '' && !msg.artifact) {
@@ -1835,6 +1922,8 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                   onQuickReply={handleQuickReply}
                   stopped={msg.stopped}
                   animateIn={!msg.fromHistory}
+                  imagePending={isStreamingMsg && msg.imagePending
+                    ? { ...msg.imagePending, label: streamingThinkingSteps[streamingThinkingSteps.length - 1] } : undefined}
                 />
                 </Fragment>
               );
@@ -1860,7 +1949,11 @@ const artifactMarker = latestRaw.indexOf('```artifact');
 
             {remoteGenDetail && !isLoading ? (
               <div className="my-2">
-                {remoteGenDetail.content ? (
+                {remoteGenDetail.image ? (
+                  /* image forge v1: back on a chat whose image is still being made */
+                  <ChatMessage role="ai" content="" isStreaming
+                    imagePending={{ ...remoteGenDetail.image, label: remoteGenDetail.thinking }} />
+                ) : remoteGenDetail.content ? (
                   <>
                     {remoteGenDetail.thinking && (
                       <div className="flex items-center gap-2 px-1 pb-2 text-xs font-body text-foreground/60">
@@ -1956,6 +2049,14 @@ const artifactMarker = latestRaw.indexOf('```artifact');
             leftSlot={isEmpty && isAuthenticated && !isDemoMode && !currentChatId
               ? <ProjectMenu projects={projects} activeId={activeProjectId} onChange={setActiveProjectId} />
               : undefined}
+            workPanel={workMode && currentChatId && !isDemoMode ? {
+              open: workPanelOpen,
+              label: t('ws.work.toggle'),
+              onToggle: () => {
+                if (workPanelOpen) { workPanelDismissedRef.current = true; setWorkPanelOpen(false); setWorkMax(false); }
+                else { workPanelDismissedRef.current = false; setWorkPanelOpen(true); }
+              },
+            } : undefined}
           />
         </motion.div>
 
@@ -1998,7 +2099,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
         onReadMore={() => { closeLiquid55(); navigate('/noticias?post=liquid55'); }}
       />
       <AnnouncementModal
-        open={announceOpen && !showNameDialog}
+        open={announceOpen && !liquid55Open && !showNameDialog}
         onClose={closeAnnouncement}
         onTry={() => { closeAnnouncement(); navigate('/desktop'); }}
         onReadMore={() => { closeAnnouncement(); navigate('/noticias?post=deiza-escritorio'); }}
@@ -2284,11 +2385,6 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                       <Share2 className="w-4 h-4 text-muted-foreground" />
                     </button>
                   )}
-                  {workMode && currentChatId && !workSide && (
-                    <button onClick={() => { workPanelDismissedRef.current = false; setWorkPanelOpen(true); }} className="p-2 hover:bg-muted rounded-full transition-colors focus-ring" aria-label={t('ws.work.open_panel')} title={t('ws.work.open_panel')}>
-                      <MonitorPlay className="w-4 h-4 text-muted-foreground" />
-                    </button>
-                  )}
                   {isAuthenticated && !isDemoMode && (
                     <button onClick={() => navigate('/search')} className="p-2 hover:bg-muted rounded-full transition-colors focus-ring" aria-label="Deiza Search" title="Deiza Search">
                       <Search className="w-4 h-4 text-muted-foreground" />
@@ -2314,9 +2410,10 @@ const artifactMarker = latestRaw.indexOf('```artifact');
 
               {renderThread(sidePanel)}
 
-              {isMobile && workMode && workPanelOpen && !!currentChatId && (
+              {(isMobile || workMax) && workMode && workPanelOpen && !!currentChatId && (
                 <WorkPanel overlay chatId={currentChatId} shot={workShot} onShot={setWorkShot} files={workFiles}
-                  agentBusy={isLoading} onClose={() => { workPanelDismissedRef.current = true; setWorkPanelOpen(false); }} />
+                  agentBusy={isLoading} maximized={workMax} onToggleMax={isMobile ? undefined : () => setWorkMax(v => !v)}
+                  onClose={() => { workPanelDismissedRef.current = true; setWorkPanelOpen(false); setWorkMax(false); }} />
               )}
               {/* Mobile artifact overlay — bottom sheet */}
               {isMobile && (
@@ -2357,6 +2454,8 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                     onShot={setWorkShot}
                     files={workFiles}
                     agentBusy={isLoading}
+                    maximized={false}
+                    onToggleMax={() => setWorkMax(true)}
                     onClose={() => { workPanelDismissedRef.current = true; setWorkPanelOpen(false); }}
                   />
                   )}

@@ -1,3 +1,4 @@
+import { useLiquid55Live } from '@/lib/launch';
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
@@ -43,6 +44,7 @@ const WindowsIcon = ({ className }: { className?: string }) => (
 type PlatformTab = 'macos' | 'linux' | 'windows' | 'agent';
 
 export default function Download() {
+  const live55 = useLiquid55Live();
   const navigate = useNavigate();
   // Chromebooks run Deiza Code in their Linux environment: open on that tab there.
   const [activeTab, setActiveTab] = useState<PlatformTab>(() => {
@@ -409,7 +411,7 @@ export default function Download() {
               </div>
               <div className="bg-background/60 rounded-2xl p-4 border border-border/40 space-y-1.5">
                 <div className="flex items-center gap-2 text-primary font-body text-xs font-semibold"><Zap className="w-4 h-4" /> Liquid y Gas cuando quieras</div>
-                <p className="font-body text-xs text-muted-foreground">Liquid 5.1 (256K) para el día a día rápido y Gas 4.5 (128K) para cambios pequeños. Cambias de modelo cuando quieras.</p>
+                <p className="font-body text-xs text-muted-foreground">Liquid {live55 ? '5.5 (1M)' : '5.1 (256K)'} para el día a día rápido y Gas 4.5 (128K) para cambios pequeños. Cambias de modelo cuando quieras.</p>
               </div>
             </div>
             <p className="font-body text-xs text-muted-foreground/70">Incluido en Friend y Signet. Solid gasta algo más de uso que Liquid, pero aprovecha la caché: las sesiones largas salen más baratas de lo que parece.</p>

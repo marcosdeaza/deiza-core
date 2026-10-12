@@ -338,7 +338,9 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 }
 
 # Max upload size: 10MB
-app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
+# Six 10 MiB images expand to 80 MiB in base64; bound the full request separately.
+app.config['MAX_CONTENT_LENGTH'] = 96 * 1024 * 1024
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 # CORS â allow all localhost ports in dev + configured production URL
 frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
@@ -697,6 +699,56 @@ def demo_chat_stream():
     return Response(stream_with_context(generate()), mimetype='text/event-stream', headers=cors_headers)
 
 
+_IMAGE_FOLLOWUP = re.compile(
+    r'^\s*(y\s+)?(ahora\s+|vale\s*,?\s*|ok\s*,?\s*|pero\s+)?('
+    r'ponle|ponla|ponlo|pon(le)?\s+(un|una|el|la|mas|menos)\b|anade(le)?|agrega(le)?|quita(le)?|cambia(le)?|hazla|hazlo|haz que|'
+    r'que sea|que tenga|en vez de|otra version|otra vez|repitela|igual pero|la misma pero|el mismo pero|mismo pero|'
+    r'en blanco y negro|en (acuarela|oleo|anime|pixel art|3d|vertical|horizontal)|estilo \w+|'
+    r'(mas|menos)\s+(grande|pequen|oscur|clar|brillante|colorid|realista|detallad|bonit|cerca|lejos|saturad|viv|suave|nitid|minimalista)\w*|'
+    r'make it|add\b|remove|change|same but|another version|in black and white|(more|less)\s+(dark|bright|realistic|colou?rful|detailed))',
+    re.I)
+
+
+def _last_chat_image(chat_id, user_id):
+    """image forge v1: the image of the latest assistant answer of this chat, as an input file,
+    so a short follow-up ("ponle un sombrero") edits it instead of drawing something unrelated."""
+    if not chat_id:
+        return None
+    try:
+        from models import Chat as _CI, Message as _MI
+        if not _CI.query.filter_by(id=chat_id, user_id=user_id).first():
+            return None
+        last = _MI.query.filter_by(chat_id=chat_id, role='assistant').order_by(_MI.id.desc()).first()
+        art = last.artifact_data if last else None
+        url = (art or {}).get('content') or '' if isinstance(art, dict) else ''
+        if (art or {}).get('type') != 'image' or not url.startswith('/api/files/'):
+            return None
+        fid = url.rsplit('/', 1)[-1]
+        if not re.match(r'^[A-Za-z0-9_.-]+$', fid):
+            return None
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'uploads', fid)
+        with open(path, 'rb') as fh:
+            data = fh.read()
+        import base64 as _b64i
+        mime = 'image/jpeg' if fid.lower().endswith(('.jpg', '.jpeg')) else 'image/webp' if fid.lower().endswith('.webp') else 'image/png'
+        return {'name': fid, 'mime_type': mime, 'is_image': True, 'raw_bytes': _b64i.b64encode(data).decode()}
+    except Exception as _lie:
+        logger.debug(f'last chat image: {_lie}')
+        return None
+
+
+def _image_only_request(f):
+    """image forge v1: 'genera/dibuja/haz una imagen de...' with no deck, document or browsing job.
+    Those go to Deiza Image even from a Work chat: the Work agent has no image generator."""
+    if re.search(r'(presentaci|diapositiva|power ?point|pptx|\bslides\b|\bdeck\b|\bpdf\b|informe|dossier|documento|'
+                 r'https?://|www\.|\bweb\b|pagina)', f):
+        return False
+    return bool(re.search(r'\b(genera\w*|crea\w*|dibuja\w*|disena\w*|haz\w*|hazme|pinta\w*|ilustra\w*|make|create|draw|'
+                          r'generate|design|paint|render)\b[^.?!\n]{0,40}\b(imagen\w*|ilustracion\w*|dibujo|foto\w*|'
+                          r'cartel|poster|logo|wallpaper|fondo de pantalla|avatar|icono|image|picture|illustration|drawing|artwork)', f)
+                or re.search(r'^\s*(dibuja|dibujame|pinta|pintame|ilustra|ilustrame|draw|paint)\b', f))
+
+
 def _auto_mode(message, chat_id, user_id):
     """deiza auto v1: 'work' for jobs that need the agent (browser, decks, researched deliverables, edits of
     a Work deliverable), 'chat' for everything else (faster)."""
@@ -704,15 +756,28 @@ def _auto_mode(message, chat_id, user_id):
     f = ''.join(c for c in unicodedata.normalize('NFKD', (message or '').lower()) if not unicodedata.combining(c))
     browser = (re.search(r'\b(entra|abre|navega|visita|ve a|mira en|rellena|inicia sesion|juega|haz clic|open|go to|visit|browse|play)\b', f)
                and re.search(r'(https?://|www\.|\.(com|org|es|net|io|edu|dev)\b|\bweb\b|pagina|lichess|classroom|campus|aula virtual|'
-                             r'website|page)', f))
+                             r'website|page|correo|gmail|outlook|moodle|teams|drive|formulario|form)', f))
+    # auto v2: "abre/inicia/usa el navegador" is a Work job even with no address yet
+    browser = browser or re.search(r'\b(abre|abreme|inicia|arranca|lanza|usa|utiliza|enciende|open|start|launch|use)\b[^.?!\n]{0,24}'
+                                   r'\b(navegador|browser|chrome|safari|firefox)\b', f) \
+        or re.search(r'\b(navega|navegame)\b', f)
     deck = re.search(r'(presentaci|diapositiva|power ?point|pptx|\bslides\b|\bdeck\b)', f)
     deliverable = re.search(r'\b(haz|hazme|hacer|crea|creame|prepara|preparame|genera|generame|monta|disena|elabora|make|create|'
                             r'build|prepare|design)\b[^.?!\n]{0,60}(pdf|informe|dossier|guia|folleto|catalogo|revista|reportaje|'
                             r'documento|report|brochure|guide|magazine)', f)
     research = re.search(r'(busca|investiga|compara|foto|imagen|actualizad|ultim|precio|logo|escudo|research|compare|photo|'
                          r'image|latest|price)', f)
-    if browser or deck or (deliverable and research):
+    # auto v2: office deliverables (PDF, Word, Excel, slides, reports...) go to Work on their own:
+    # it researches, builds the file and checks it before delivering.
+    office = re.search(r'\b(haz|hazme|hacer|crea|creame|crear|prepara|preparame|genera|generame|monta|montame|disena|elabora|'
+                       r'redacta|redactame|escribe|escribeme|convierte|pasa|exporta|make|create|build|prepare|generate|write|draft|'
+                       r'export|convert)\b[^.?!\n]{0,70}\b(pdf|docx?|word|excel|xlsx|hoja de calculo|spreadsheet|power ?point|pptx|'
+                       r'presentacion|diapositivas|informe|dossier|memoria|curriculum|\bcv\b|folleto|catalogo|factura|presupuesto|'
+                       r'contrato|plantilla|documento|report|brochure|invoice|resume|template|document)\b', f)
+    if browser or deck or office or (deliverable and research):
         return 'work'
+    if _image_only_request(f):
+        return 'chat'
     if chat_id:
         try:
             from models import Chat as _ChatA
@@ -738,7 +803,14 @@ def send_message_stream():
     model = _normalize_model(data.get('model', 'liquid'))
     language = data.get('language', 'en')
     files_data = data.get('files', [])
+    # Keep the per-file image bound even though JSON/base64 requests have more room.
+    for attachment in files_data:
+        raw = attachment.get('raw_bytes') or ''
+        if raw and (len(raw) * 3 // 4 - (len(raw) - len(raw.rstrip('=')))) > MAX_UPLOAD_BYTES:
+            return jsonify({'error': 'too_large'}), 413
     mode = data.get('mode', 'chat')
+    # local browser v1: Deiza for desktop runs Work's browser on the user's computer
+    _local_browser = bool(data.get('local_browser'))
     # deiza auto v1: Chat and Work are one input; 'auto' picks per message
     effort = str(data.get('effort') or '').strip().lower()[:8] or None
     if effort not in (None, 'low', 'medium', 'high', 'max'):
@@ -899,10 +971,29 @@ def send_message_stream():
 
     # Image generation intent: cheap keyword prefilter + tiny LLM check
     wants_image = False
+    if mode == 'work' and not wants_video:
+        # image forge v1: an image request typed with Work selected still gets a real image
+        import unicodedata as _ud
+        _fw = ''.join(c for c in _ud.normalize('NFKD', (message or '').lower()) if not _ud.combining(c))
+        if _image_only_request(_fw):
+            mode = 'chat'
+    _img_inputs = files_data
     if mode == 'chat' and not wants_video:
         try:
             _has_img = any(f.get('is_image') or (f.get('mime_type', '') or '').startswith('image/') for f in files_data)
-            wants_image = ai_service.detect_image_intent(message, _has_img)
+            import unicodedata as _ud0
+            _fn = ''.join(c for c in _ud0.normalize('NFKD', (message or '').lower()) if not _ud0.combining(c))
+            # an explicit "genera/dibuja/haz una imagen..." needs no classifier (it missed "dibújame")
+            wants_image = (not _has_img and _image_only_request(_fn)) or ai_service.detect_image_intent(message, _has_img)
+            if not _has_img and len(message or '') < 300 and '?' not in (message or ''):
+                import unicodedata as _ud2
+                _fu = ''.join(c for c in _ud2.normalize('NFKD', (message or '').lower()) if not _ud2.combining(c))
+                if wants_image or _IMAGE_FOLLOWUP.search(_fu):
+                    _prev_img = _last_chat_image(chat_id, user_id)
+                    if _prev_img and (wants_image or _IMAGE_FOLLOWUP.search(_fu)):
+                        # a change to the image just made: edit it, keeping its shape
+                        wants_image = True
+                        _img_inputs = list(files_data) + [_prev_img]
         except Exception:
             wants_image = False
 
@@ -1270,13 +1361,24 @@ def send_message_stream():
         if wants_image:
             try:
                 yield f"data: {json.dumps({'chat_id': new_chat_id})}\n\n"
+                # image forge v1: the shape is known before generating; the chat draws the
+                # placeholder with it, also after leaving and coming back (gen payload).
+                try:
+                    _img_aspect = ai_service.image_aspect(message, _img_inputs)
+                except Exception:
+                    _img_aspect = '1:1'
+                _img_pending = {'aspect': _img_aspect, 'started': time.time()}
+                try:
+                    yield f"data: {json.dumps({'image_pending': _img_pending})}\n\n"
+                except GeneratorExit:
+                    client_gone = True
                 _step1 = 'Haciendo un boceto...' if language == 'es' else 'Creating sketch...'
                 try:
                     yield f"data: {json.dumps({'thinking': _step1})}\n\n"
                 except GeneratorExit:
                     client_gone = True
                 _stream_thinking = _step1
-                _gen_save()
+                _gen_save(image=_img_pending)
                 time.sleep(0.4)
                 _step2 = 'Generando imagen con Deiza Image...' if language == 'es' else 'Generating image with Deiza Image...'
                 if not client_gone:
@@ -1286,8 +1388,8 @@ def send_message_stream():
                         client_gone = True
                         client_gone = True
                 _stream_thinking = _step2
-                _gen_save()
-                result = ai_service.generate_image(message, files_data, language)
+                _gen_save(image=_img_pending)
+                result = ai_service.generate_image(message, _img_inputs, language, aspect=_img_aspect)
                 if result and result.get('data_url'):
                     _step3 = 'Poniendo los últimos detalles...' if language == 'es' else 'Applying finishing touches...'
                     if not client_gone:
@@ -1297,7 +1399,7 @@ def send_message_stream():
                             client_gone = True
                             client_gone = True
                     _stream_thinking = _step3
-                    _gen_save()
+                    _gen_save(image=_img_pending)
                     time.sleep(0.3)
                 from models import Message as DBMessageImg, User as UserModelImg, IMAGE_RAW_COST
                 if result and not result.get('data_url') and result.get('text'):
@@ -1335,7 +1437,7 @@ def send_message_stream():
                         _img_content = _img_url
                 except Exception:
                     pass
-                _img_artifact = {'name': f'imagen_{_ts}.png', 'type': 'image', 'content': _img_content}
+                _img_artifact = {'name': f'imagen_{_ts}.png', 'type': 'image', 'content': _img_content, 'aspect': result.get('aspect') or _img_aspect}
                 img_msg = DBMessageImg(chat_id=new_chat_id, role='assistant', content=_note, artifact_data=_img_artifact)
                 db.session.add(img_msg)
                 _u = UserModelImg.query.get(user_id)
@@ -1378,7 +1480,8 @@ def send_message_stream():
                                           files=files_data, user_id=user_id, chat_id=new_chat_id,
                                           project_context=project_context, memory_context=_stream_memory_ctx,
                                           custom_instructions=custom_instructions, skills_context=_skills_ctx,
-                                          usage_sink=_usage_acc, effort=effort, variant=model_variant)
+                                          usage_sink=_usage_acc, effort=effort, variant=model_variant,
+                                          local_browser=_local_browser)
             else:
               _gen = ai_service.stream_message(message=message, history=prior_history, model=model, language=language,
                                              files=files_data, mode=mode, agent_type=agent_type,
@@ -1392,7 +1495,7 @@ def send_message_stream():
             _gen_start = time.time()
             _last_content = time.time()
             from conversation_context import chat_silence_timeout
-            _MAX_SILENCE = 240 if mode == 'work' else chat_silence_timeout(model)  # deep reasoning needs a longer window (Work: long tool calls)
+            _MAX_SILENCE = 240 if mode == 'work' else chat_silence_timeout(model, liquid55_enabled(), model_variant)  # respect the effective Liquid generation
             _MAX_TOTAL = 1500 if mode == 'work' else 600   # 10 min max generation (25 for Work jobs)
             while True:
                 _kind, _chunk = _pump_next(_PING_EVERY)
@@ -1402,11 +1505,11 @@ def send_message_stream():
                     if time.time() - _last_content > _MAX_SILENCE:
                         logger.warning(f'Generation watchdog: {_MAX_SILENCE}s silence, stopping: chat={new_chat_id}')
                         _pump_stop()
-                        break
+                        raise TimeoutError('Generation silence deadline exceeded')
                     if time.time() - _gen_start > _MAX_TOTAL:
                         logger.warning(f'Generation watchdog: {_MAX_TOTAL}s total, stopping: chat={new_chat_id}')
                         _pump_stop()
-                        break
+                        raise TimeoutError('Generation total deadline exceeded')
                     # Nothing from the model for a while (deck authoring, PDF render, slow search):
                     # keep bytes flowing so browsers and proxies do not give the stream up for dead.
                     yield ': ping\n\n'
@@ -1451,6 +1554,9 @@ def send_message_stream():
                 yield f"data: {json.dumps({'error': friendly})}\n\n"
             except GeneratorExit:
                 client_gone = True
+            finally:
+                _gen_clear()
+            return
         finally:
             # Record tokens for aborted/cancelled streams (only while the client is still here).
             # Normal completions are charged once, in _persist() below.
@@ -1672,6 +1778,7 @@ def list_generations():
                     'content': _p.get('content', ''),
                     'thinking': _p.get('thinking', ''),
                     'ts': _p.get('ts', 0),
+                    **({'image': _p['image']} if _p.get('image') else {}),
                 }
             except Exception:
                 continue
@@ -1701,6 +1808,7 @@ def get_generation(chat_id):
         'sources': _p.get('sources', []),
         'images': _p.get('images', []),
         'ts': _p.get('ts', 0),
+        **({'image': _p['image']} if _p.get('image') else {}),
     })
 
 
@@ -2117,8 +2225,11 @@ register_work(app, login_required)
 register_code_search(app, code_auth_required)
 
 
+# Liquid launch is evaluated per request: installed Code clients follow the generic alias.
+from liquid55_launch import liquid55_enabled
+
 # Public catalogue (canonical ids; aliases keep working). Context windows measured against the engines.
-PUBLIC_API_MODELS = [
+_PUBLIC_API_MODELS = [
     {'id': 'deiza-liquid-5.1', 'name': 'Deiza Liquid 5.1', 'default': True,
      'description': 'Balanced and agentic. The default model: fast, strong at code and tools.',
      'context_window': 262144, 'max_output_tokens': 32768, 'vision': True, 'tools': True, 'reasoning_effort': True,
@@ -2134,6 +2245,18 @@ PUBLIC_API_MODELS = [
 ]
 
 
+def public_api_models():
+    models = [dict(m, aliases=list(m['aliases'])) for m in _PUBLIC_API_MODELS]
+    if liquid55_enabled():
+        legacy = dict(models[0], default=False, aliases=[],
+                      description='Previous Liquid generation. Select this version to keep using Liquid 5.1.')
+        models[0].update(id='deiza-liquid-5.5', name='Deiza Liquid 5.5', context_window=1048576,
+                         description='Balanced and agentic, with adaptive reasoning and a 1M-token context window.')
+        models.append(legacy)
+    return models
+
+
+
 @app.route('/api/v1', methods=['GET'])
 @app.route('/api/v1/', methods=['GET'])
 def api_v1_index():
@@ -2145,7 +2268,7 @@ def api_v1_index():
         'llms_txt': 'https://deiza.org/llms.txt', 'openapi': 'https://deiza.org/openapi.json',
         'auth': 'Authorization: Bearer dz_... (keys at https://deiza.org/api-keys)',
         'endpoints': ['POST /chat/completions', 'GET /models', 'GET /usage', 'POST /search'],
-        'models': [m['id'] for m in PUBLIC_API_MODELS],
+        'models': [m['id'] for m in public_api_models()],
     })
 
 
@@ -2154,21 +2277,25 @@ def api_v1_index():
 @app.route('/api/v1/models', methods=['GET'])
 def code_models():
     created = 1759276800
-    data = [{'object': 'model', 'created': created, 'owned_by': 'deizalab', **m} for m in PUBLIC_API_MODELS]
+    live55 = liquid55_enabled()
+    liquid_name = 'Liquid 5.5' if live55 else 'Liquid 5.1'
+    liquid_window = '1M' if live55 else '262k'
+    data = [{'object': 'model', 'created': created, 'owned_by': 'deizalab', **m} for m in public_api_models()]
     resp = jsonify({
         'data': data,
         'object': 'list',
         'models': [
             {
                 'id': 'deiza-liquid',
-                'name': 'Deiza Liquid 5.1',
-                'tag': 'Liquid 5.1',
-                'badge': '262k tokens · Equilibrado',
+                'name': 'Deiza ' + liquid_name,
+                'tag': liquid_name,
+                'badge': liquid_window + ' tokens · Equilibrado',
                 'tier': 'code',
                 'default': True,
                 'provider': 'deizalab',
-                'description': 'Equilibrado y agéntico. Ventana de 262k tokens, rápido, diffs precisos y visión. Para el trabajo diario.',
-                'features': ['autonomous_coding', '1M_context', 'surgical_diffs', 'tools', 'streaming']
+                'description': 'Equilibrado y agéntico. Ventana de ' + liquid_window + ' tokens, rápido, diffs precisos y visión. Para el trabajo diario.',
+                'context_window': 1048576 if live55 else 262144,
+                'features': ['autonomous_coding', '1M_context' if live55 else '256K_context', 'surgical_diffs', 'tools', 'streaming']
             },
             {
                 'id': 'deiza-solid',
@@ -2195,17 +2322,17 @@ def code_models():
             {
                 'id': 'deiza-omniscient',
                 'name': 'Deiza Omniscient',
-                'tag': 'Liquid 5.1',
+                'tag': liquid_name,
                 'alias_of': 'deiza-liquid',
                 'default': False,
                 'provider': 'deizalab',
-                'description': 'Alias de compatibilidad para Deiza Liquid 5.1.',
+                'description': 'Alias de compatibilidad para Deiza ' + liquid_name + '.',
                 'features': ['autonomous_coding', 'surgical_diffs', 'tools', 'streaming']
             }
         ]
     })
     resp.headers['Access-Control-Allow-Origin'] = '*'
-    resp.headers['Cache-Control'] = 'public, max-age=300'
+    resp.headers['Cache-Control'] = 'public, max-age=30'
     return resp
 
 
@@ -2598,12 +2725,31 @@ def _code_usage_comment(user_id):
         return ''
 
 
+
+def code_model_mapping(model):
+    if model in ('deiza-liquid-5.5', 'liquid-5.5'):
+        return (SOLID5_MODEL, 'code') if liquid55_enabled() else None
+    mapping = DEIZA_CODE_MODEL_MAP.get(model)
+    if model in ('deiza-liquid', 'liquid', 'deiza-liquid-5', 'liquid-5', 'deiza-omniscient', 'omniscient') and liquid55_enabled():
+        return SOLID5_MODEL, 'code'
+    return mapping
+
+
 def _omniscient_completions(user_id, data, stream, model_id, created, upstream_model=None, tier='code', grace=False):
     """deiza-code v1.3 integration: OpenAI-compatible proxy to the Deiza Omniscient cluster."""
     import requests as _rq
     from flask import send_from_directory, Response, stream_with_context
     from models import User as _User
     messages = _omniscient_messages(data)
+    from liquid55_launch import liquid55_enabled
+    _liquid = model_id in ('deiza-liquid', 'liquid', 'deiza-liquid-5', 'liquid-5', 'deiza-omniscient', 'omniscient', 'deiza-liquid-5.1', 'liquid-5.1', 'deiza-liquid-5.5', 'liquid-5.5')
+    _liquid55 = _liquid and model_id not in ('deiza-liquid-5.1', 'liquid-5.1') and liquid55_enabled()
+    if _liquid:
+        _identity = 'Deiza Liquid ' + ('5.5' if _liquid55 else '5.1')
+        messages.insert(0, {'role': 'system', 'content':
+            f'Identidad del modelo: eres {_identity}, de DeizaLab, creado por Marcos de Aza y su equipo. '
+            'Menciona tu versión solo cuando te pregunten. No atribuyas tu identidad a proveedores externos. '
+            'Continúa con las instrucciones de la tarea.'})
     from conversation_context import CONTINUITY_DIRECTIVE, reasoning_key
     for m in messages:
         if m.get('role') == 'system' and isinstance(m.get('content'), str):
@@ -2681,6 +2827,8 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
         payload['reasoning_effort'] = ('low' if _effort == 'low' else 'high') if payload['model'] in (CODE_MODEL_LIQUID, SOLID5_MODEL) else ('high' if _effort in ('ultra', 'max') else _effort)
     elif payload['model'] in (SOLID5_MODEL, CODE_MODEL_LIQUID):
         payload['reasoning_effort'] = 'high'
+    if _liquid55:
+        payload['reasoning_effort'] = 'high' if _effort in ('ultra', 'max') else (_effort if _effort in ('low', 'medium', 'high') else 'medium')
     # native function calling (the CLI's tools); passed through untouched
     _tools = data.get('tools')
     if isinstance(_tools, list) and _tools:
@@ -2746,13 +2894,13 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
         orig_model = _requested_engine
 
         # Fast failover if Solid 5 is in cooldown
-        if orig_model == SOLID5_MODEL and now < _solid_cooldown_until:
-            payload['model'] = SOLID5_FALLBACK_MODEL
+        if orig_model == SOLID5_MODEL and payload['model'] == SOLID5_MODEL and now < _solid_cooldown_until:
+            payload['model'] = CODE_MODEL_LIQUID if _liquid55 else SOLID5_FALLBACK_MODEL
 
         # Multi-tier resilient cascade: never fail long sessions
         candidates = [payload['model']]
         if orig_model == SOLID5_MODEL:
-            if SOLID5_FALLBACK_MODEL not in candidates:
+            if not _liquid55 and SOLID5_FALLBACK_MODEL not in candidates:
                 candidates.append(SOLID5_FALLBACK_MODEL)
             if CODE_MODEL_LIQUID not in candidates:
                 candidates.append(CODE_MODEL_LIQUID)
@@ -2770,6 +2918,8 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
                 logger.warning('Code fallback skipped: context cannot fit without losing instructions user=%s', user_id)
                 continue
             if cand != orig_model:
+                if _liquid55:
+                    payload['reasoning_effort'] = 'low' if _effort == 'low' else 'high'
                 for _m in payload['messages']:
                     _m.pop('reasoning', None)
                     _m.pop('reasoning_content', None)
@@ -2856,6 +3006,7 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
         })
 
     def _generate():
+        global _solid_cooldown_until
         text_len = 0
         usage = {}
         useful = False          # visible content or a tool call already reached the client
@@ -2893,11 +3044,11 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
                     chunk = json.loads(data_str)
                 except Exception:
                     continue
+                if chunk.get('usage'):
+                    usage = chunk['usage']
                 if chunk.get('error'):
                     upstream_error = chunk.get('error')
                     break
-                if chunk.get('usage'):
-                    usage = chunk['usage']
                 chunk.pop('obfuscation', None)
                 chunk.pop('service_tier', None)
                 for _cc in (chunk.get('choices') or []):
@@ -2966,6 +3117,15 @@ def _omniscient_completions(user_id, data, stream, model_id, created, upstream_m
                   # A reasoning-only answer exhausted the budget. Retry with a smaller
                   # effort; no visible text or tools have been emitted, so nothing repeats.
                   payload['reasoning_effort'] = 'low'
+              # An HTTP 200 stream can still contain an upstream failure.
+              # Advance the same cascade used for HTTP failures before
+              # reopening; no text/tool output has reached the client.
+              if payload['model'] == SOLID5_MODEL:
+                  with _SOLID_COOLDOWN_LOCK:
+                      _solid_cooldown_until = time.time() + 30.0
+                  payload['model'] = CODE_MODEL_LIQUID if _liquid55 else SOLID5_FALLBACK_MODEL
+              elif payload['model'] == SOLID5_FALLBACK_MODEL:
+                  payload['model'] = CODE_MODEL_LIQUID
               nxt, _retry_failure = _open_upstream()
               if nxt is not None:
                   up = nxt
@@ -3011,18 +3171,17 @@ def code_chat_completions():
     # All plans have access to Deiza Code
 
     raw_model = (data.get('model') or 'deiza-liquid').strip().lower()
-    mapping = DEIZA_CODE_MODEL_MAP.get(raw_model)
+    mapping = code_model_mapping(raw_model)
     if mapping:
         upstream_model, tier = mapping
     else:
-        if not _own_client():
+        if raw_model in ('deiza-liquid-5.5', 'liquid-5.5') or not _own_client():
             return api_error(404, 'model_not_found',
                              f"The model '{raw_model}' does not exist. Use one of: "
-                             + ', '.join(m['id'] for m in PUBLIC_API_MODELS) + ' (GET https://deiza.org/api/v1/models).',
+                             + ', '.join(m['id'] for m in public_api_models()) + ' (GET https://deiza.org/api/v1/models).',
                              param='model')
         raw_model = 'deiza-liquid'
-        upstream_model = CODE_MODEL_LIQUID
-        tier = 'code'
+        upstream_model, tier = code_model_mapping(raw_model)
 
     can_use, reason = user_obj.can_use_model_with_sublimit(tier)
     _allowed, usage = user_obj.usage_gate()
@@ -3715,6 +3874,12 @@ def upload_file():
     file = request.files['file']
     if not file.filename:
         return jsonify({'error': 'No file selected'}), 400
+
+    file.stream.seek(0, os.SEEK_END)
+    file_size = file.stream.tell()
+    file.stream.seek(0)
+    if file_size > MAX_UPLOAD_BYTES:
+        return jsonify({'error': 'too_large'}), 413
 
     filename_lower = file.filename.lower()
     basename_lower = os.path.basename(filename_lower)

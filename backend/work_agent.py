@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import queue
 import threading
 import time
 import uuid
@@ -82,6 +83,62 @@ def browser(sid, action, timeout=75, **args):
                                  headers={'Content-Type': 'application/json'})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
+
+
+# ── Local browser (Deiza for desktop) ───────────────────────────────────────
+# local browser v1: when the chat runs inside Deiza for desktop, the page opens on the user's own
+# computer (the full-screen Code browser with Deiza's pointer) instead of Chromium on this server.
+# The agent asks through a WORK event; the app runs the action and posts the state back here.
+
+_lb_redis = None
+
+
+def _redis():
+    global _lb_redis
+    if _lb_redis is None:
+        import redis as _r
+        _lb_redis = _r.Redis(host=os.getenv('REDIS_HOST', 'redis'), port=int(os.getenv('REDIS_PORT', 6379)), db=0,
+                             socket_connect_timeout=2)
+    return _lb_redis
+
+
+def local_browser_call(state, action, args, timeout=70):
+    rid = uuid.uuid4().hex
+    r = _redis()
+    r.setex(f'deiza:work:lbreq:{rid}', 180, f"{state.get('user_id')}:{state.get('chat_id')}")
+    state['outbox'].put({'type': 'local_browser', 'id': rid, 'chat_id': state.get('chat_id'), 'action': action, 'args': args})
+    key = f'deiza:work:lb:{rid}'
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        v = r.get(key)
+        if v:
+            r.delete(key)
+            try:
+                out = json.loads(v)
+                return out if isinstance(out, dict) else {'error': 'bad local browser answer'}
+            except ValueError:
+                break
+        time.sleep(0.08)
+    return {'error': 'El navegador de tu ordenador no ha respondido (¿sigue abierta Deiza para escritorio?).'}
+
+
+def local_browser_result(user_id, chat_id, rid, result):
+    """Store the app's answer for a pending local browser request of this user and chat."""
+    if not re.match(r'^[a-f0-9]{32}$', str(rid or '')):
+        return False
+    r = _redis()
+    owner = r.get(f'deiza:work:lbreq:{rid}')
+    if not owner or owner.decode() != f'{int(user_id)}:{int(chat_id)}':
+        return False
+    r.delete(f'deiza:work:lbreq:{rid}')
+    r.setex(f'deiza:work:lb:{rid}', 120, json.dumps(result if isinstance(result, dict) else {'error': 'bad answer'}))
+    return True
+
+
+def _browser_dispatch(state, sid, action, kw):
+    if state is not None and state.get('local_browser'):
+        return local_browser_call(state, action, kw)
+    return browser(sid, action, **kw)
 
 
 def session_id(user_id, chat_id):
@@ -386,7 +443,7 @@ Reglas:
 - Sé eficiente: no repitas búsquedas, no abras más páginas de las necesarias y no descargues imágenes que no vayas a usar.
 - Para leer una página usa browser_read: es más rápido y exacto que desplazarte mirando capturas. Usa clics, escritura y desplazamiento para interactuar (buscadores, filtros, pestañas, menús).
 - Tableros (ajedrez, damas) y lienzos: usa el elemento `area` de `elements` (x0, y0, w, h). Casilla en la columna c y la fila r (0 a 7, desde arriba a la izquierda de la imagen): x = x0 + (c + 0,5)·w/8, y = y0 + (r + 0,5)·h/8; jugando con blancas, a1 está abajo a la izquierda. Mueve con dos browser_click (origen y destino) o con browser_drag, y comprueba en la nueva captura que la pieza se ha movido antes de seguir.
-- Para hacer clic usa primero browser_click_text con el texto visible del botón o enlace, o las coordenadas exactas de la lista `elements` que devuelve cada acción del navegador. Usa coordenadas estimadas sobre la captura solo para tableros, mapas o lienzos (1280 x 800). Si algo no cambia tras dos intentos, prueba otra vía (otra opción del menú, la URL directa, buscarlo) en lugar de repetir.""",
+- Para hacer clic usa primero browser_click_text con el texto visible del botón o enlace, o las coordenadas exactas de la lista `elements` que devuelve cada acción del navegador. Usa coordenadas estimadas sobre la captura (en píxeles de esa imagen) solo para tableros, mapas o lienzos. Si algo no cambia tras dos intentos, prueba otra vía (otra opción del menú, la URL directa, buscarlo) en lugar de repetir.""",
     'en': """# Work mode
 You are in Deiza Work: you complete jobs end to end with real tools, and the user watches your steps and the browser live. Work like a careful, autonomous professional.
 
@@ -405,7 +462,7 @@ Rules:
 - Be efficient: don't repeat searches, open only the pages you need and don't save images you won't use.
 - To read a page use browser_read: it is faster and more accurate than scrolling through screenshots. Use clicks, typing and scrolling to interact (search boxes, filters, tabs, menus).
 - Boards (chess, draughts) and canvases: use the `area` element in `elements` (x0, y0, w, h). Square in column c and row r (0 to 7, from the top left of the image): x = x0 + (c + 0.5)*w/8, y = y0 + (r + 0.5)*h/8; playing white, a1 is bottom left. Move with two browser_click calls (from and to) or browser_drag, and check in the new screenshot that the piece moved before going on.
-- To click, first use browser_click_text with the visible text of the button or link, or the exact coordinates in the `elements` list each browser action returns. Use estimated screenshot coordinates only for boards, maps or canvases (1280 x 800). If nothing changes after two tries, take another route (another menu option, the direct URL, searching for it) instead of repeating.""",
+- To click, first use browser_click_text with the visible text of the button or link, or the exact coordinates in the `elements` list each browser action returns. Use estimated screenshot coordinates (pixels of that image) only for boards, maps or canvases. If nothing changes after two tries, take another route (another menu option, the direct URL, searching for it) instead of repeating.""",
 }
 
 _DECK_RE = re.compile(r'(presentaci|diapositiva|power ?point|pptx|slides|deck|pitch)', re.I)
@@ -423,7 +480,7 @@ def _tools():
         f('web_search', 'Search the web. Returns a short answer with sources.', {'query': s}, ['query']),
         f('browser_open', 'Open a URL in the live browser. Returns the page title and a screenshot.', {'url': s}, ['url']),
         f('browser_read', 'Read the text of the current page, with its main links and large images.'),
-        f('browser_click', 'Click at x,y on the latest screenshot (1280x800).',
+        f('browser_click', 'Click at x,y in pixels of the latest screenshot (its size is the image size).',
           {'x': {'type': 'number'}, 'y': {'type': 'number'}}, ['x', 'y']),
         f('browser_type', 'Type text into the focused field; submit=true presses Enter.',
           {'text': s, 'submit': {'type': 'boolean'}}, ['text']),
@@ -478,7 +535,11 @@ def _label(lang, name, args):
 # ── Engine call (streaming, tool calls) ──────────────────────────────────────
 
 def _stream_round(engine, msgs, tools, usage_add):
-    """Yields ('reason', str) / ('text', str) while the model works and finally ('done', dict)."""
+    """Yield progress, then a complete answer or complete tool calls.
+
+    Only switch engines before useful text has been emitted. Tool arguments and
+    reasoning are internal progress, so interrupted calls cannot run tools.
+    """
     import requests
     from conversation_context import fit_messages
     window = 1048576 if engine.get('name') in ('Solid 5', 'Liquid 5.5') else 262144
@@ -504,57 +565,83 @@ def _stream_round(engine, msgs, tools, usage_add):
         resp = None
         log.warning('work engine HTTP %s (%s): %s', code, attempt + 1, err)
         if code in (400, 401, 403, 404):
-            raise RuntimeError(f'engine HTTP {code}: {err[:160]}')
+            raise RuntimeError(f'engine HTTP {code}')
         if code == 429 and engine.get('fallback'):
             break
         time.sleep(2.0 * (attempt + 1) + (6 if code == 429 else 0))
-    if resp is None:
-        fb = engine.pop('fallback', None)  # liquid 5.5 v1: saturated engine -> its fallback for the rest of the job
+
+    calls, text, reasoning, finish, rfield = {}, '', '', None, 'reasoning'
+    stream_error = None
+    if resp is not None:
+        resp.encoding = 'utf-8'
+        try:
+            for line in resp.iter_lines(decode_unicode=True):
+                if not line or not line.startswith('data:'):
+                    continue
+                data = line[5:].strip()
+                if data == '[DONE]':
+                    break
+                try:
+                    d = json.loads(data)
+                except ValueError:
+                    continue
+                if d.get('usage'):
+                    usage_add(d['usage'])
+                if d.get('error'):
+                    raise RuntimeError('engine stream error')
+                ch = (d.get('choices') or [{}])[0]
+                delta = ch.get('delta') or {}
+                r = delta.get('reasoning') or delta.get('reasoning_content')
+                if r and not reasoning:
+                    rfield = 'reasoning' if delta.get('reasoning') else 'reasoning_content'
+                if r:
+                    reasoning += r
+                    yield ('reason', r)
+                if delta.get('content'):
+                    text += delta['content']
+                    yield ('text', delta['content'])
+                for tc in delta.get('tool_calls') or []:
+                    i = tc.get('index', 0)
+                    c = calls.setdefault(i, {'id': '', 'name': '', 'args': ''})
+                    if tc.get('id'):
+                        c['id'] = tc['id']
+                    fn = tc.get('function') or {}
+                    if fn.get('name'):
+                        c['name'] += fn['name']
+                    if fn.get('arguments'):
+                        c['args'] += fn['arguments']
+                        yield ('args', None)
+                if ch.get('finish_reason'):
+                    finish = ch['finish_reason']
+            if finish not in ('stop', 'tool_calls', 'function_call'):
+                raise RuntimeError('engine answer incomplete')
+            if not calls and not text.strip():
+                raise RuntimeError('engine returned an empty answer')
+            for c in calls.values():
+                if not c['name'] or not isinstance(json.loads(c['args'] or '{}'), dict):
+                    raise RuntimeError('engine returned an incomplete tool call')
+        except Exception as e:  # noqa: BLE001
+            stream_error = e
+        finally:
+            resp.close()
+    else:
+        stream_error = RuntimeError('engine unavailable')
+
+    if stream_error is not None:
+        if text.strip():
+            raise RuntimeError('engine response interrupted') from stream_error
+        fb = engine.pop('fallback', None)
         if fb:
             log.warning('work engine %s unavailable, switching to %s', engine.get('model'), fb.get('model'))
-            engine.update({k: v for k, v in fb.items() if k != 'effort'})
+            # Keep an explicit low request; otherwise use the fallback's own
+            # effort (K2.5 needs high for reliable tool reasoning).
+            fallback_effort = 'low' if engine.get('effort') == 'low' else fb.get('effort', engine.get('effort'))
+            engine.update(fb)
+            engine['effort'] = fallback_effort
             yield from _stream_round(engine, msgs, tools, usage_add)
             return
-        raise RuntimeError('engine unavailable')
-    resp.encoding = 'utf-8'
-    calls, text, reasoning, finish, rfield = {}, '', '', None, 'reasoning'
-    for line in resp.iter_lines(decode_unicode=True):
-        if not line or not line.startswith('data:'):
-            continue
-        data = line[5:].strip()
-        if data == '[DONE]':
-            break
-        try:
-            d = json.loads(data)
-        except ValueError:
-            continue
-        if d.get('usage'):
-            usage_add(d['usage'])
-        ch = (d.get('choices') or [{}])[0]
-        delta = ch.get('delta') or {}
-        r = delta.get('reasoning') or delta.get('reasoning_content')
-        if r and not reasoning:
-            rfield = 'reasoning' if delta.get('reasoning') else 'reasoning_content'
-        if r:
-            reasoning += r
-            yield ('reason', r)
-        if delta.get('content'):
-            text += delta['content']
-            yield ('text', delta['content'])
-        for tc in delta.get('tool_calls') or []:
-            i = tc.get('index', 0)
-            c = calls.setdefault(i, {'id': '', 'name': '', 'args': ''})
-            if tc.get('id'):
-                c['id'] = tc['id']
-            fn = tc.get('function') or {}
-            if fn.get('name'):
-                c['name'] += fn['name']
-            if fn.get('arguments'):
-                c['args'] += fn['arguments']
-                yield ('args', None)
-        if ch.get('finish_reason'):
-            finish = ch['finish_reason']
-    resp.close()
+        raise RuntimeError('engine response interrupted') from stream_error
+
     yield ('done', {'calls': [calls[k] for k in sorted(calls)], 'text': text, 'reasoning': reasoning, 'finish': finish,
                     'rfield': rfield})
 
@@ -580,19 +667,19 @@ def _prune_images(msgs):
 
 def stream(message, history=None, model='pro', language='es', files=None, user_id=None, chat_id=None,
            usage_sink=None, project_context=None, memory_context=None, custom_instructions=None,
-           skills_context=None, effort=None, variant=None, **_):
+           skills_context=None, effort=None, variant=None, local_browser=False, **_):
     import ai_service
     prev = getattr(ai_service._USAGE_TLS, 'sink', None)
     ai_service._USAGE_TLS.sink = usage_sink
     try:
         yield from _run(message, history, model, language, files, user_id, chat_id, project_context,
-                        memory_context, custom_instructions, skills_context, effort, variant)
+                        memory_context, custom_instructions, skills_context, effort, variant, local_browser)
     finally:
         ai_service._USAGE_TLS.sink = prev
 
 
 def _run(message, history, model, language, files, user_id, chat_id, project_context, memory_context,
-         custom_instructions, skills_context, effort=None, variant=None):
+         custom_instructions, skills_context, effort=None, variant=None, local_browser=False):
     import ai_service
     import prompt_v2
     from conversation_context import fit_messages
@@ -688,14 +775,18 @@ def _run(message, history, model, language, files, user_id, chat_id, project_con
     if not engine:
         raise RuntimeError('No cloud engine configured')
     # deiza auto v1: the user's effort; max also gets more rounds
-    engine['effort'] = {'low': 'low', 'high': 'high', 'max': 'high'}.get(effort or '', 'medium')
+    engine['effort'] = {'low': 'low', 'high': 'high', 'max': 'high'}.get(
+        effort or '', 'medium' if engine.get('name') == 'Liquid 5.5' else engine.get('effort', 'high'))
     max_rounds = MAX_ROUNDS + (20 if effort == 'max' else 0)
     usage_add = ai_service._usage_add_openai
     tools = _tools()
     window = 1048576 if engine.get('name') in ('Solid 5', 'Liquid 5.5') else 262144
     t0 = time.time()
     step_n = 0
-    state = {}
+    state = {'local_browser': bool(local_browser), 'outbox': queue.Queue(), 'user_id': user_id, 'chat_id': chat_id}
+    # The page learns at once that this answer is a Work job (panel button, live trace), even when
+    # the agent ends up answering without any tool.
+    yield _ev({'type': 'start', 'local': bool(local_browser)})
     no_photos = bool(re.search(r'sin (fotos|im[aá]genes)|no (pongas|uses|quiero|incluyas) (fotos|im[aá]genes)|without (photos|images)|no (photos|images)',
                                message or '', re.I))
     # Photos are required in decks (always) and in documents that live on images (guides, dossiers,
@@ -778,9 +869,7 @@ def _run(message, history, model, language, files, user_id, chat_id, project_con
                         'Something essential is missing: the document has no real photos and was not checked. Search photos with '
                         'image_search, save them with save_image, add them, check it with preview_document and end with the '
                         'DELIVER line instead of pasting the document.')
-            elif (not hold and not deliver_name and state.get('announce_nudges', 0) < 2
-                  and re.search(r"\b(intentar[eé]|voy a (probar|intentar|hacer|mover|abrir|hacer clic)|d[eé]jame|lo intento de nuevo|"
-                                r"probar[eé]|let me|i'll try|i will try|trying again|next i will)\b", (out or '')[-600:], re.I)):
+            elif (not hold and not deliver_name and state.get('announce_nudges', 0) < 3 and _announces_action(out)):
                 state['announce_nudges'] = state.get('announce_nudges', 0) + 1
                 hold = ('Has dicho lo que vas a hacer pero no lo has hecho. Hazlo ahora con las herramientas; si ya has terminado, '
                         'escribe solo la respuesta final para el usuario.' if es else
@@ -844,9 +933,18 @@ def _run(message, history, model, language, files, user_id, chat_id, project_con
                         box['e'] = e
                 th = threading.Thread(target=_work, daemon=True)
                 th.start()
-                while th.is_alive():
-                    th.join(8)
-                    if th.is_alive():
+                waited = 0.0
+                while th.is_alive() or not state['outbox'].empty():
+                    th.join(0.05)
+                    waited += 0.05
+                    # requests for the local browser go out at once, not with the 8 s heartbeat
+                    while True:
+                        try:
+                            yield _ev(state['outbox'].get_nowait())
+                        except queue.Empty:
+                            break
+                    if th.is_alive() and waited >= 8:
+                        waited = 0.0
                         yield _thinking(label + ('…' if es else '...'))
                 if 'e' in box:
                     raise box['e']
@@ -870,6 +968,23 @@ def _run(message, history, model, language, files, user_id, chat_id, project_con
 
 
 _DELIVER_RE = re.compile(r'^\s*(?:ENTREGAR|DELIVER):\s*(.+?)\s*$', re.M)
+
+
+# autonomy v2: an answer that ends announcing its next step ("Voy a acceder a ese artículo") was not
+# the end of the job: the agent is sent back to do it. Offers and questions to the user are endings.
+_ANNOUNCE_RE = re.compile(
+    r"\b(voy a|vamos a|paso a|procedo a|a continuaci[oó]n|ahora (voy|paso|intento|accedo|abro|busco|entro|reviso)|"
+    r"intentar[eé]|probar[eé]|acceder[eé]|abrir[eé]|buscar[eé]|entrar[eé]|navegar[eé]|revisar[eé]|comprobar[eé]|"
+    r"descargar[eé]|guardar[eé]|preparar[eé]|d[eé]jame|lo intento de nuevo|let me|i'll|i will|next,? i|now i\b|trying again)\b", re.I)
+_OFFER_RE = re.compile(r"(si quieres|si lo prefieres|si te parece|dime si|quieres que|te parece|if you('d)? (like|want)|let me know|"
+                       r"would you like|should i|do you want)", re.I)
+
+
+def _announces_action(text):
+    tail = (text or '').strip()[-500:]
+    if not tail or tail.rstrip().endswith('?') or _OFFER_RE.search(tail[-260:]):
+        return False
+    return bool(_ANNOUNCE_RE.search(tail))
 
 
 def _filter_deliver(text, final):
@@ -974,8 +1089,19 @@ def _exec(name, a, sid, lang, language, user_id, state=None):
             kw.update(x1=a.get('x1', 0), y1=a.get('y1', 0), x2=a.get('x2', 0), y2=a.get('y2', 0))
         elif action == 'read':
             kw['shot'] = True
-        st = browser(sid, action, **kw)
+        st = _browser_dispatch(state, sid, action, kw)
         ev = _shot_event(st)
+        # browser fit v1: the panel draws Deiza's pointer where the agent acted
+        if ev is not None:
+            try:
+                if action == 'click':
+                    ev['pointer'] = {'x': float(kw.get('x') or 0), 'y': float(kw.get('y') or 0)}
+                elif action == 'drag':
+                    ev['pointer'] = {'x': float(kw.get('x2') or 0), 'y': float(kw.get('y2') or 0)}
+                elif isinstance(st.get('clicked'), dict):
+                    ev['pointer'] = {'x': float(st['clicked'].get('x') or 0), 'y': float(st['clicked'].get('y') or 0)}
+            except (TypeError, ValueError):
+                pass
         events = [ev] if ev else []
         images = ['data:image/jpeg;base64,' + st['shot']] if st.get('shot') else []
         if st.get('error'):

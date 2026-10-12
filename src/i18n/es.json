@@ -875,6 +875,12 @@
   "ws.work.no_files": "Las imágenes que Deiza guarde o edite para el entregable aparecerán aquí.",
   "ws.work.edited": "editada",
   "ws.work.browser_error": "El navegador no ha respondido. Inténtalo de nuevo.",
+  "ws.work.local_title": "Abierto en tu ordenador",
+  "ws.work.local_text": "Deiza usa el navegador de tu ordenador, a pantalla completa y con su puntero. Aquí ves la última captura.",
+  "ws.work.local_show": "Mostrar navegador",
+  "ws.work.maximize": "Ampliar",
+  "ws.work.restore": "Reducir",
+  "ws.work.toggle": "Navegador y archivos",
   "ws.work.sample.1": "Compara los 5 mejores portátiles para estudiar por menos de 800 € y hazme un PDF con fotos",
   "ws.work.sample.2": "Hazme una presentación de 10 diapositivas sobre la Revolución Francesa con fotos reales",
   "ws.work.sample.3": "Entra en la web del Ayuntamiento de Valencia y resúmeme las ayudas al alquiler para jóvenes",
@@ -927,5 +933,9 @@
   "pl.friend.f1.l55": "Gas 4.5, Liquid 5.5 y Solid 5",
   "an.try.l55": "Probar Liquid 5.5",
   "st.news.desc.l55": "Liquid 5.5, Skills y la historia de los modelos de Deiza",
-  "st.chain.on.l55": "Si un modelo no responde, Deiza prueba con versiones anteriores de la misma familia (Liquid 5.5 → Liquid 5.1). Solid nunca baja a Gas."
+  "st.chain.on.l55": "Si un modelo no responde, Deiza prueba con versiones anteriores de la misma familia (Liquid 5.5 → Liquid 5.1). Solid nunca baja a Gas.",
+  "code.desc.l55": "Deiza Code es el agente de IA que programa, ejecuta comandos y automatiza tareas contigo desde tu terminal. Conéctate con un clic desde el navegador y utiliza los modelos Liquid 5.5, Solid 5 y Gas con los créditos de tu cuenta Deiza.",
+  "dk.code.desc.l55": "Deiza Code con interfaz propia. Eliges una carpeta y el agente lee el proyecto, escribe archivos, ejecuta comandos y comprueba su trabajo con Solid 5, Liquid 5.5 o Gas 4.5. Tus sesiones se sincronizan entre ordenadores.",
+  "dk.faq.a1.l55": "Para el chat, no: funciona con cualquier cuenta, igual que en la web. El modo Code (Solid 5, Liquid 5.5 y Gas 4.5) está incluido en Friend y Signet; con Free puedes abrirlo y ver cómo funciona.",
+  "ak.model.legacy": "Generación anterior"
 }

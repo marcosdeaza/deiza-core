@@ -875,6 +875,12 @@
   "ws.work.no_files": "Images Deiza saves or edits for the deliverable will appear here.",
   "ws.work.edited": "edited",
   "ws.work.browser_error": "The browser did not respond. Try again.",
+  "ws.work.local_title": "Open on your computer",
+  "ws.work.local_text": "Deiza uses your computer's browser, full screen and with its pointer. This is the latest capture.",
+  "ws.work.local_show": "Show browser",
+  "ws.work.maximize": "Expand",
+  "ws.work.restore": "Restore",
+  "ws.work.toggle": "Browser and files",
   "ws.work.sample.1": "Compare the 5 best laptops for students under 800 € and make me a PDF with photos",
   "ws.work.sample.2": "Make me a 10-slide presentation on the French Revolution with real photos",
   "ws.work.sample.3": "Go to the city council's website and summarise the rent aid for young people",
@@ -927,5 +933,9 @@
   "pl.friend.f1.l55": "Gas 4.5, Liquid 5.5 and Solid 5",
   "an.try.l55": "Try Liquid 5.5",
   "st.news.desc.l55": "Liquid 5.5, Skills and the story of Deiza's models",
-  "st.chain.on.l55": "If a model does not answer, Deiza tries previous versions of the same family (Liquid 5.5 → Liquid 5.1). Solid never drops to Gas."
+  "st.chain.on.l55": "If a model does not answer, Deiza tries previous versions of the same family (Liquid 5.5 → Liquid 5.1). Solid never drops to Gas.",
+  "code.desc.l55": "Deiza Code is the AI agent that codes, runs commands, and automates tasks with you in your terminal. Connect with one click in your browser and use Liquid 5.5, Solid 5, and Gas models with your account credits.",
+  "dk.code.desc.l55": "Deiza Code with its own interface. Pick a folder and the agent reads the project, writes files, runs commands and checks its work with Solid 5, Liquid 5.5 or Gas 4.5. Your sessions sync across computers.",
+  "dk.faq.a1.l55": "Not for chat: it works with any account, just like the web. Code mode (Solid 5, Liquid 5.5 and Gas 4.5) is included in Friend and Signet; on Free you can open it and see how it works.",
+  "ak.model.legacy": "5.1"
 }

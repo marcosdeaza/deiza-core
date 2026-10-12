@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { api, Project, ProjectFile, Chat } from "@/services/api";
+import { api, apiErrorMessage, Project, ProjectFile, Chat } from "@/services/api";
 import ConfirmDialog from "@/components/deiza/ConfirmDialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import {
@@ -111,7 +111,7 @@ const ProjectPanel = ({ projectId, open, onClose, onNewChat, onOpenChat, onDelet
       const msg = e?.message || "";
       toast.error(msg.includes("file_limit") || msg.includes("limite")
         ? t("prj.err.filelimit")
-        : t("prj.err.upload"));
+        : apiErrorMessage(e, t, t("prj.err.upload")));
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";

@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ReadAloudButton from './ReadAloudButton';
 import HandoffCard, { type Handoff } from './HandoffCard';
 import { SlideDeckCard, VideoCard, QuestionCard, extractQuestions } from './InlineMedia';
+import ImageForge, { imageBoxStyle, pigmentGround } from './ImageForge';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -174,6 +175,8 @@ interface ChatMessageProps {
   handoff?: Handoff;
   /** Fade/slide in on mount (off for messages loaded from history, so switching chats does not flash) */
   animateIn?: boolean;
+  /** image forge v1: an image is on its way (aspect fixed by the server); shown until the artifact lands */
+  imagePending?: { aspect: string; started?: number; label?: string };
 }
 
 const codeStyle: Record<string, React.CSSProperties> = {
@@ -773,10 +776,12 @@ const ImageLightbox = ({ src, name, onClose }: { src: string; name: string; onCl
   );
 };
 
-const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateArtifact, onShare, isStreaming, attachedFiles, images, mode, sources, handoff, messageId, canListen, onQuickReply, canReply, stopped, animateIn = true }: ChatMessageProps) => {
-  const { t } = useLanguage();
+const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateArtifact, onShare, isStreaming, attachedFiles, images, mode, sources, handoff, messageId, canListen, onQuickReply, canReply, stopped, animateIn = true, imagePending }: ChatMessageProps) => {
+  const { t, language } = useLanguage();
   const [copied, setCopied] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  // image forge v1: a fresh image comes into focus only once its pixels are loaded
+  const [imgReady, setImgReady] = useState(!animateIn);
   // Mobile: long-press any message to copy it (native-app style)
   const longPress = useLongPress(() => {
     const text = role === 'user' ? content : _stripArtifactBlock(content);
@@ -935,6 +940,12 @@ const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateA
 
       {handoff && handoff.content && <HandoffCard handoff={handoff} />}
 
+      {imagePending && !artifact && (
+        <div className="mt-4">
+          <ImageForge aspect={imagePending.aspect} started={imagePending.started} label={imagePending.label} language={language} />
+        </div>
+      )}
+
       {/* Artifact card — during streaming show terminal-style indicator */}
       {artifact && !isQuestionArtifact && (
         isStreaming ? (
@@ -1055,7 +1066,41 @@ const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateA
           /* Generated clip (DZ-Motion) — plays inline */
           <VideoCard artifact={artifact} />
         ) : artifact.type === 'image' && (artifact.content?.startsWith('data:image') || artifact.content?.startsWith('/api/files/')) ? (
-          /* Generated image (DZ-Image) — shown inline with a download action */
+          /* Generated image (DZ-Image) — shown inline with a download action. image forge v1: with
+             its aspect known it takes the forge's box and comes into focus out of the pigments. */
+          artifact.aspect ? (
+          <div
+            className="mt-4 relative group/img max-w-full rounded-2xl overflow-hidden deiza-border deiza-shadow-lg"
+            style={{ ...imageBoxStyle(artifact.aspect), background: animateIn ? pigmentGround(document.documentElement.classList.contains('dark')) : undefined }}
+          >
+            <motion.img
+              src={artifact.content}
+              alt={artifact.name}
+              className="absolute inset-0 w-full h-full object-cover cursor-zoom-in hover:opacity-95 transition-opacity"
+              onLoad={() => setImgReady(true)}
+              onError={() => setImgReady(true)}
+              initial={animateIn ? { opacity: 0, filter: 'blur(24px) saturate(0.35)', scale: 1.05 } : false}
+              animate={imgReady ? { opacity: 1, filter: 'blur(0px) saturate(1)', scale: 1 } : { opacity: 0, filter: 'blur(24px) saturate(0.35)', scale: 1.05 }}
+              transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
+              onClick={() => setLightboxOpen(true)}
+              role="button"
+              aria-label={`${t('cm.zoom')} ${artifact.name}`}
+            />
+            <AnimatePresence>
+              {lightboxOpen && (
+                <ImageLightbox src={artifact.content!} name={artifact.name} onClose={() => setLightboxOpen(false)} />
+              )}
+            </AnimatePresence>
+            <button
+              onClick={() => { haptic('light'); void saveOrShareUrl(artifact.content!, artifact.name || 'imagen.png'); }}
+              className="absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-[11px] font-body opacity-80 sm:opacity-0 sm:group-hover/img:opacity-100 transition-opacity focus-ring"
+              aria-label={t('cm.download.image')}
+            >
+              <Download className="w-3 h-3" aria-hidden="true" />
+              {t('artifact.download')}
+            </button>
+          </div>
+          ) : (
           <motion.div
             className="mt-4 relative group/img inline-block max-w-full"
             initial={animateIn ? { opacity: 0, scale: 0.97 } : false}
@@ -1085,6 +1130,7 @@ const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateA
               {t('artifact.download')}
             </button>
           </motion.div>
+          )
         ) : (
           <ArtifactCard artifact={artifact} onClick={onArtifactClick} onIterate={onIterateArtifact} />
         )

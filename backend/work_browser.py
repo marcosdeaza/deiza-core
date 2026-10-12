@@ -196,7 +196,7 @@ class BrowserOwner(threading.Thread):
                                        timezone_id='Europe/Madrid')
         ctx.set_default_timeout(25000)
         page = ctx.new_page()
-        s = {'ctx': ctx, 'page': page, 'last': time.time()}
+        s = {'ctx': ctx, 'page': page, 'last': time.time(), 'vw': VIEW_W, 'vh': VIEW_H}
 
         def on_page(p):
             s['page'] = p          # links that open a new tab continue in that tab
@@ -280,33 +280,59 @@ class BrowserOwner(threading.Thread):
     }"""  # browser elements v3
 
     @staticmethod
-    def _state(page, shot=True):
+    def _state(page, shot=True, light=False):
         out = {'url': page.url, 'title': ''}
         try:
             out['title'] = page.title()[:200]
         except Exception:
             pass
-        try:
-            out['elements'] = page.evaluate(BrowserOwner.ELEMENTS_JS)
-        except Exception:
-            out['elements'] = []
+        if not light:
+            try:
+                out['elements'] = page.evaluate(BrowserOwner.ELEMENTS_JS)
+            except Exception:
+                out['elements'] = []
         if shot:
-            img = page.screenshot(type='jpeg', quality=62)
+            img = page.screenshot(type='jpeg', quality=58 if light else 62)
             out['shot'] = base64.b64encode(img).decode()
-            out['w'], out['h'] = VIEW_W, VIEW_H
+            vs = page.viewport_size or {'width': VIEW_W, 'height': VIEW_H}
+            out['w'], out['h'] = vs['width'], vs['height']
         return out
+
+    @staticmethod
+    def _fit(s, vp):
+        """browser fit v1: the page takes the shape of the panel that shows it (1280 wide)."""
+        try:
+            w, h = int(vp.get('w') or 0), int(vp.get('h') or 0)
+        except (TypeError, ValueError):
+            return
+        if w < 200 or h < 150:
+            return
+        vh = max(600, min(1700, round(VIEW_W * h / w)))
+        if abs(vh - s.get('vh', VIEW_H)) < 24:
+            return
+        try:
+            s['page'].set_viewport_size({'width': VIEW_W, 'height': vh})
+            s['vw'], s['vh'] = VIEW_W, vh
+        except Exception:
+            pass
 
     def _do(self, sid, action, a):
         if action == 'close':
             self._close(sid)
             return {'closed': True}
+        light = bool(a.get('light'))
         if action == 'status':
             s = self.sessions.get(sid)
-            return {'open': bool(s), **(self._state(s['page'], bool(a.get('shot'))) if s else {})}
+            if s and a.get('viewport'):
+                self._fit(s, a['viewport'])
+            return {'open': bool(s), **(self._state(s['page'], bool(a.get('shot')), light) if s else {})}
         s = self._session(sid, create=(action not in ('shot',)))
         if s is None:
             return {'open': False}
+        if a.get('viewport'):
+            self._fit(s, a['viewport'])
         page = s['page']
+        VW, VH = s.get('vw', VIEW_W), s.get('vh', VIEW_H)
         if action == 'open':
             url = str(a.get('url') or '').strip()
             if url and '://' not in url:
@@ -322,21 +348,24 @@ class BrowserOwner(threading.Thread):
             self._settle(page, 900)
         elif action == 'click':
             x, y = float(a.get('x', 0)), float(a.get('y', 0))
-            if not (0 <= x <= VIEW_W and 0 <= y <= VIEW_H):
+            if not (0 <= x <= VW and 0 <= y <= VH):
                 raise ValueError('click outside the page')
             page.mouse.click(x, y)
-            self._settle(page)
+            self._settle(page, 250 if light else 700)
         elif action == 'type':
             text = str(a.get('text') or '')[:2000]
             if a.get('clear'):
                 page.keyboard.press('Control+A')
                 page.keyboard.press('Backspace')
-            page.keyboard.type(text, delay=8)
+            if light:
+                page.keyboard.insert_text(text)     # the user's typing: no per-key delay
+            else:
+                page.keyboard.type(text, delay=8)
             if a.get('submit'):
                 page.keyboard.press('Enter')
                 self._settle(page, 1200)
             else:
-                page.wait_for_timeout(250)
+                page.wait_for_timeout(30 if light else 250)
         elif action == 'click_text':
             text = str(a.get('text') or '').strip()[:120]
             if not text:
@@ -361,11 +390,23 @@ class BrowserOwner(threading.Thread):
                     break
             if target is None:
                 raise ValueError(f'no visible element with text {text!r}')
+            clicked = None
+            try:
+                target.scroll_into_view_if_needed(timeout=3000)
+                bb = target.bounding_box()
+                if bb:
+                    clicked = {'x': round(bb['x'] + bb['width'] / 2), 'y': round(bb['y'] + bb['height'] / 2)}
+            except Exception:
+                pass
             target.click(timeout=8000)
             self._settle(page)
+            out = self._state(page, True, light)
+            if clicked:
+                out['clicked'] = clicked
+            return out
         elif action == 'drag':
             x1, y1, x2, y2 = (float(a.get(k, 0)) for k in ('x1', 'y1', 'x2', 'y2'))
-            if not all(0 <= v <= VIEW_W for v in (x1, x2)) or not all(0 <= v <= VIEW_H for v in (y1, y2)):
+            if not all(0 <= v <= VW for v in (x1, x2)) or not all(0 <= v <= VH for v in (y1, y2)):
                 raise ValueError('drag outside the page')
             page.mouse.move(x1, y1)
             page.mouse.down()
@@ -377,11 +418,11 @@ class BrowserOwner(threading.Thread):
             if key not in KEYS:
                 raise ValueError('key not allowed')
             page.keyboard.press(' ' if key == 'Space' else key)
-            self._settle(page, 400)
+            self._settle(page, 120 if light else 400)
         elif action == 'scroll':
             dy = max(-4000, min(4000, int(a.get('dy') or 600)))
             page.mouse.wheel(0, dy)
-            page.wait_for_timeout(450)
+            page.wait_for_timeout(160 if light else 450)
         elif action == 'back':
             page.go_back(wait_until='domcontentloaded', timeout=15000)
             self._settle(page, 500)
@@ -409,7 +450,7 @@ class BrowserOwner(threading.Thread):
             pass
         else:
             raise ValueError('unknown action')
-        return self._state(page, True)
+        return self._state(page, True, light)
 
 
 OWNER = BrowserOwner()

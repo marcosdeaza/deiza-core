@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Pin, PinOff, Pencil, Trash2, Check, X, Loader2, FolderOpen, Search } from 'lucide-react';
+import { Pin, PinOff, Pencil, Trash2, Check, X, Loader2, FolderOpen, Search, Briefcase } from 'lucide-react';
 import type { Chat } from '@/services/api';
 import { useLanguage } from '@/contexts/LanguageContext';
 
@@ -163,7 +163,7 @@ const ConversationList = ({
                   ) : (
                     <span className={`flex-1 min-w-0 truncate font-body text-[13px] leading-5 ${active ? 'font-medium' : ''}`}>
                       {chat.mode === 'work' && (
-                        <span className="mr-1.5 align-[1px] font-body text-[9px] uppercase tracking-[0.14em] text-primary/80">Work</span>
+                        <Briefcase className="inline-block w-3.5 h-3.5 mr-1.5 -mt-0.5 text-primary/75" strokeWidth={1.75} aria-label="Work" />
                       )}{/* deiza work v1 */}
                       {chat.title}
                     </span>

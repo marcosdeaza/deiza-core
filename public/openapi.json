@@ -346,12 +346,15 @@
         "properties": {
           "model": {
             "type": "string",
-            "default": "deiza-liquid-5.1",
+            "default": "deiza-liquid",
             "enum": [
+              "deiza-liquid",
+              "deiza-liquid-5.5",
               "deiza-liquid-5.1",
               "deiza-solid-5",
               "deiza-gas-4.5"
-            ]
+            ],
+            "description": "deiza-liquid follows the active Liquid: 5.1 until 2026-10-12T00:00:00+02:00, then 5.5 (1M context). deiza-liquid-5.1 pins the previous generation; deiza-liquid-5.5 is available from launch."
           },
           "messages": {
             "type": "array",
