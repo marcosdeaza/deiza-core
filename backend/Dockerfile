@@ -49,8 +49,8 @@ ENV PATH=/home/deiza/.local/bin:$PATH
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen(\"http://localhost:${PORT}/api/health\")" || exit 1
 
-# Fail the build on continuity, tool-pairing or stream-integrity regressions.
-RUN DEIZA_TEST_SOURCE=/app python -m unittest discover -s tests -p 'test_*.py'
+# Private production fixtures are excluded from the public export.
+RUN python -m compileall -q .
 
 # 3 workers x 24 threads = 72 concurrent connections (streams are I/O bound and
 # hold a thread for their whole duration). VPS: 4 vCPU / 8 GB, ~250 MB per worker.
@@ -60,7 +60,7 @@ CMD exec gunicorn \
   --workers 3 \
   --threads 24 \
   --timeout 600 \
-  --graceful-timeout 900 \
+  --graceful-timeout 29400 \
   --keep-alive 5 \
   --worker-class gthread \
   --max-requests 20000 \

@@ -20,6 +20,7 @@ interface ChatInputProps {
   disabled?: boolean;
   /** Deiza is answering: typing stays possible, sending is replaced by Stop */
   busy?: boolean;
+  chatId?: number | null;
   restoredValue?: string;
   isDemo?: boolean;
   userPlan?: string;
@@ -50,7 +51,7 @@ const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(
 
 const ChatInput = ({
   onSend, onStop, model, onModelChange,
-  disabled, busy, restoredValue, isDemo, userPlan = 'free', onUpgradeClick,
+  disabled, busy, chatId, restoredValue, isDemo, userPlan = 'free', onUpgradeClick,
   variant = 'dock', onDraftChange, placeholder, effort, onEffortChange, mode, onModeChange, leftSlot, workPanel, onSteer,
 }: ChatInputProps) => {
   const { t } = useLanguage();
@@ -87,14 +88,35 @@ const ChatInput = ({
   const valueRef = useRef('');
   const native = isNative();
 
+  const draftKey = chatId ? `deiza:composer_draft:${chatId}` : 'deiza:composer_draft:new';
+
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('deiza:composer_draft');
+      const saved = localStorage.getItem(draftKey) || (!chatId ? localStorage.getItem('deiza:composer_draft') : null);
       if (saved && !value) {
         setValue(saved);
       }
     } catch {}
-  }, []);
+  }, [draftKey]);
+
+  // When switching chats or starting a new chat, scope the input cleanly and reset history pointer
+  const prevChatIdRef = useRef<number | null | undefined>(chatId);
+  useEffect(() => {
+    if (prevChatIdRef.current !== chatId) {
+      prevChatIdRef.current = chatId;
+      promptHistoryIdxRef.current = -1;
+      draftRef.current = '';
+      if (restoredValue === undefined || restoredValue === '') {
+        try {
+          const newDraftKey = chatId ? `deiza:composer_draft:${chatId}` : 'deiza:composer_draft:new';
+          const saved = localStorage.getItem(newDraftKey) || '';
+          setValue(saved);
+        } catch {
+          setValue('');
+        }
+      }
+    }
+  }, [chatId, restoredValue]);
 
   const restoreHistory = useCallback((valueNow: string, dir: 1 | -1) => {
     const h = promptHistoryRef.current;
@@ -126,25 +148,6 @@ const ChatInput = ({
   const hasDraft = value.trim().length > 0 || uploadedFiles.length > 0;
   useEffect(() => { onDraftChange?.(hasDraft); }, [hasDraft, onDraftChange]);
 
-  // Global ArrowUp/ArrowDown — works even when the textarea lost focus
-  // (e.g. right after sending) as long as no other text field is focused.
-  useEffect(() => {
-    if (native) return;
-    const onWinKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable)) return;
-      if (e.key === 'ArrowUp' && promptHistoryRef.current.length > 0) {
-        e.preventDefault();
-        restoreHistory(valueRef.current, -1);
-      } else if (e.key === 'ArrowDown' && promptHistoryIdxRef.current !== -1) {
-        e.preventDefault();
-        restoreHistory(valueRef.current, 1);
-      }
-    };
-    window.addEventListener('keydown', onWinKey, true);
-    return () => window.removeEventListener('keydown', onWinKey, true);
-  }, [restoreHistory, native]);
-
   // Auto-grow textarea. Empty → let CSS min-height rule (measuring an empty
   // textarea during the mount/layout animation can read a bogus scrollHeight).
   useEffect(() => {
@@ -156,9 +159,9 @@ const ChatInput = ({
   }, [value, voiceState]);
 
   useEffect(() => {
-    if (restoredValue) {
+    if (restoredValue !== undefined) {
       setValue(restoredValue);
-      if (!native) setTimeout(() => {
+      if (restoredValue && !native) setTimeout(() => {
         const ta = textareaRef.current;
         if (!ta) return;
         ta.focus();
@@ -193,8 +196,12 @@ const ChatInput = ({
     const v = e.target.value;
     setValue(v);
     try {
-      if (v.trim()) localStorage.setItem('deiza:composer_draft', v);
-      else localStorage.removeItem('deiza:composer_draft');
+      if (v.trim()) {
+        localStorage.setItem(draftKey, v);
+      } else {
+        localStorage.removeItem(draftKey);
+        localStorage.removeItem('deiza:composer_draft');
+      }
     } catch {}
   };
 
@@ -207,13 +214,16 @@ const ChatInput = ({
       return;
     }
     if (e.key === 'ArrowUp' && promptHistoryRef.current.length > 0 && !value.includes('\n')) {
+      if (textareaRef.current && textareaRef.current.selectionStart > 0) return;
       e.preventDefault();
       restoreHistory(value, -1);
       return;
     }
     if (e.key === 'ArrowDown' && promptHistoryIdxRef.current !== -1) {
+      if (textareaRef.current && textareaRef.current.selectionEnd < value.length) return;
       e.preventDefault();
       restoreHistory(value, 1);
+      return;
     }
   };
 
@@ -379,7 +389,10 @@ const ChatInput = ({
       setValue('');
       draftRef.current = '';
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
-      try { localStorage.removeItem('deiza:composer_draft'); } catch {}
+      try {
+        localStorage.removeItem(draftKey);
+        localStorage.removeItem('deiza:composer_draft');
+      } catch {}
       onSteer(trimmed);
       return;
     }
@@ -407,7 +420,10 @@ const ChatInput = ({
     setUploadedFiles([]);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    try { localStorage.removeItem('deiza:composer_draft'); } catch {}
+    try {
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem('deiza:composer_draft');
+    } catch {}
     onSend(trimmed, filesToSend);
     // Keep the keyboard open on desktop for rapid follow-ups
     if (!native && window.matchMedia?.('(pointer: fine)').matches) {

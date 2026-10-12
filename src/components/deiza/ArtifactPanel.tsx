@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import RoseMark from './RoseMark';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { authHeaders } from '@/services/api';
-import { isNative, saveOrShareFile, shareText, haptic } from '@/lib/native';
+import { isNative, saveOrShareFile, saveOrShareUrl, shareText, haptic } from '@/lib/native';
 import 'katex/dist/katex.min.css';
 import { preprocessLaTeX, KATEX_OPTIONS } from '@/lib/latex';
 
@@ -49,7 +49,7 @@ const loadMarkdownPlugins = async () => {
 interface ArtifactPanelProps {
   open: boolean;
   onClose: () => void;
-  artifact: { name: string; type: string; content?: string } | null;
+  artifact: { name: string; type: string; content?: string; url?: string } | null;
   /** When true, renders inline (no fixed positioning) — used inside ResizablePanel */
   inline?: boolean;
   /** History navigation */
@@ -464,6 +464,17 @@ const ArtifactPanel = ({ open, onClose, artifact, inline = false, historyIndex =
     // PDF: download the REAL generated PDF — never the markdown source
     if (ext === 'pdf') {
       try {
+        if (artifact.url) {
+          if (isNative()) {
+            await saveOrShareUrl(artifact.url, artifact.name);
+          } else {
+            const res = await fetch(artifact.url);
+            const blob = await res.blob();
+            const r = await _triggerDownload(blob, artifact.name);
+            if (r === 'downloaded') toast.success(t('ap.pdf.done'));
+          }
+          return;
+        }
         let blob: Blob;
         if (pdfBlobUrl) {
           blob = await (await fetch(pdfBlobUrl)).blob();
@@ -679,6 +690,21 @@ const ArtifactPanel = ({ open, onClose, artifact, inline = false, historyIndex =
 
     /* PDF — pdf.js viewer everywhere (web and inside the app) */
     if (isPDF) {
+      /* Direct URL path (compiled PDF on server) */
+      if (artifact.url) {
+        return (
+          <div className="absolute inset-0">
+            <Suspense fallback={<CodeSkeleton />}>
+              <PDFViewerLazy
+                url={artifact.url}
+                fileName={artifact.name}
+                onDownload={handleDownload}
+              />
+            </Suspense>
+          </div>
+        );
+      }
+
       const spinner = (
         <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8">
           <div className="relative w-10 h-10">

@@ -217,6 +217,30 @@ MODULES = {
 - Para ideas (nombres, eslóganes, proyectos, regalos, planes), da pocas y buenas, con una línea de por qué funcionan, en lugar de listas largas intercambiables.
 - En arte y diseño, habla con criterio: composición, color, tipografía, materiales y referencias reales de artistas, movimientos u obras.
 - Para crear no necesitas buscar en la web salvo que pidan datos reales. No inventes referencias: si mencionas una obra, un autor o un lugar, que exista. En listas de ideas, entre 5 y 8 como máximo.""",
+        'quiz': r'''# Tests interactivos y cuestionarios (quiz)
+- Cuando el usuario pida un test, tipo test, cuestionario, examen o preguntas de opción múltiple:
+  1. Escribe 1 frase de apertura breve en el chat y genera las preguntas SIEMPRE en un bloque interactivo ```quiz con JSON estricto. NUNCA las escribas en texto plano convencional en el chat.
+  2. Si no especifican cantidad, crea entre 5 y 10 preguntas bien calibradas sobre el tema pedido (o el número exacto que pidan).
+  3. Cada pregunta debe tener exactamente 4 opciones plausibles (A, B, C, D), el índice numérico de la opción correcta `answer` (0 para A, 1 para B, 2 para C, 3 para D) y una explicación didáctica completa en `explanation` sobre por qué es correcta esa opción y por qué se descartan las otras.
+  4. Formato exacto:
+```quiz
+{
+  "title": "Título descriptivo del test",
+  "questions": [
+    {
+      "q": "¿Pregunta clara y precisa?",
+      "options": ["Opción A", "Opción B", "Opción C", "Opción D"],
+      "answer": 0,
+      "explanation": "Explicación conceptual detallada del acierto."
+    }
+  ]
+}
+```
+  5. NUNCA reveles las soluciones fuera del bloque en el chat: la interfaz evalúa las respuestas en tiempo real.
+- Cuando el usuario envíe sus resultados o pida analizar su puntuación / fallos tras completar el test:
+  - Actúa como un tutor pedagógico: felicita el esfuerzo y los aciertos.
+  - Explica en profundidad cada fallo: el concepto clave, por qué la opción elegida era una trampa habitual y cómo razonarlo bien.
+  - Da 2 o 3 consejos prácticos de repaso y un reto final.''',
     },
     'en': {
         'math': r"""# Maths, science and exercises
@@ -242,6 +266,29 @@ MODULES = {
 - For ideas (names, slogans, projects, gifts, plans), give a few good ones with one line on why each works, instead of long interchangeable lists.
 - On art and design, speak with judgment: composition, colour, typography, materials and real references to artists, movements or works.
 - Creative work doesn't need web search unless real facts are requested. Don't invent references: any work, author or place you mention must exist. In idea lists, 5 to 8 at most.""",
+        'quiz': r'''# Interactive quizzes and multiple-choice tests
+- When the user asks for a quiz, multiple choice test, exam, questionnaire, or self-assessment:
+  1. Write 1 brief opening sentence in chat and ALWAYS generate the questions inside an interactive ```quiz block with strict JSON. NEVER write questions as plain text lists.
+  2. Unless specified otherwise, generate 5 to 10 calibrated questions (or the exact count requested).
+  3. Each question must have 4 plausible options, the 0-based integer index of the correct answer `answer` (0 for A, 1 for B, 2 for C, 3 for D), and a didactic explanation in `explanation`.
+  4. Exact format:
+```quiz
+{
+  "title": "Descriptive Quiz Title",
+  "questions": [
+    {
+      "q": "Clear and well-formed question?",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "answer": 0,
+      "explanation": "Detailed conceptual explanation."
+    }
+  ]
+}
+```
+  5. NEVER reveal the solutions in chat text outside the block: the UI grades answers in real time.
+- When the user submits their results for review:
+  - Act as a supportive, expert tutor: praise correct answers and diagnose mistakes with clear explanations of core concepts.
+  - Give 2 or 3 targeted revision recommendations and an optional challenge question.''',
     },
 }
 
@@ -267,6 +314,14 @@ _CREATIVE_RE = re.compile(
     r'dialogo|diálogo|carta (de|para)|felicitaci|dedicatoria|chiste|brainstorm|poem|story|lyrics|character|'
     r'screenplay|write me|name ideas|tagline|creative|ilustraci|diseño|logo|paleta|composici)'
 )
+_QUIZ_RE = re.compile(
+    r'(tipo test|test de\b|examen tipo|cuestionario|quiz\b|preguntas tipo test|autoevaluaci|trivia|'
+    r'preguntas con opciones|ponme a prueba|evalua mis conocimientos|evalúa mis conocimientos|'
+    r'preguntas de repaso|multiple choice|opcion multiple|opción múltiple|analizar resultado|'
+    r'analiza mi resultado|he completado el test|mi puntuacion|mi puntuación)',
+    re.I
+)
+
 _DELIVERABLE_RE = re.compile(
     r'(pdf|docx|word|documento|informe|presentaci|diapositiva|power ?point|pptx|slides|web|pagina|html|landing|app\b|'
     r'aplicaci|juego|game|zip|proyecto|codigo|script|programa|component|artefacto|artifact|descarga|exporta|curriculum|'
@@ -295,6 +350,8 @@ def topics(message: str, history_text: str = '', has_files: bool = False) -> lis
         out.append('humanities')
     if _CREATIVE_RE.search(cur):
         out.append('creative')
+    if _QUIZ_RE.search(cur) or (len(cur) < 200 and _QUIZ_RE.search(ctx)):
+        out.append('quiz')
     return out
 
 

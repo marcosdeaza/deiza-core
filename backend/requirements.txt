@@ -20,3 +20,4 @@ mathml2omml>=0.0.2
 Pygments>=2.15
 lxml>=4.9
 pypdf>=4.0
+pypdfium2>=5.0.0

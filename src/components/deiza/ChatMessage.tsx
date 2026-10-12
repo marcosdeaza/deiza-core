@@ -11,7 +11,7 @@ import useLongPress from '@/hooks/useLongPress';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReadAloudButton from './ReadAloudButton';
 import HandoffCard, { type Handoff } from './HandoffCard';
-import { SlideDeckCard, VideoCard, QuestionCard, extractQuestions } from './InlineMedia';
+import { SlideDeckCard, VideoCard, QuestionCard, QuizCard, extractQuestions, PdfDocumentCard } from './InlineMedia';
 import ImageForge, { imageBoxStyle, pigmentGround } from './ImageForge';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -153,7 +153,7 @@ interface ChatMessageProps {
   messageId?: string | number;
   /** Show the "Escuchar" (TTS) action on assistant messages */
   canListen?: boolean;
-  artifact?: { name: string; type: string; content?: string; url?: string; slides?: string[]; title?: string; theme?: string; aspect?: string };
+  artifact?: { name: string; type: string; content?: string; url?: string; slides?: string[]; pages?: string[]; title?: string; theme?: string; aspect?: string };
   onArtifactClick?: () => void;
   /** Sends a quick reply chosen from an inline question card (see InlineMedia) */
   onQuickReply?: (text: string) => void;
@@ -885,21 +885,28 @@ const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateA
     : displayContent;
   // Decision questions live in a trailing ```question block: shown as option buttons,
   // never as a code block. While streaming the block is still partial, so keep it hidden.
-  let { text: cleanContent, questions } = extractQuestions(cleanContentRaw.replace(/```question[\s\S]*$/, m => (m.includes('```', 12) ? m : '')));
+  let { text: cleanContent, questions, title: quizTitle, isQuiz } = extractQuestions(cleanContentRaw.replace(/```(?:question|quiz|test)[\s\S]*$/, m => (m.includes('```', 12) ? m : '')));
 
   // Normalize LaTeX expressions (\[ \], \( \), $$, unwrapped matrices) for KaTeX & remark-math
   const processedMarkdown = useMemo(() => preprocessLaTeX(cleanContent), [cleanContent]);
 
-  // Retroactive fallback: If questions array is empty but this message was saved with an artifact of type question
-  const isQuestionArtifact = Boolean(artifact && (artifact.type === 'question' || artifact.name?.endsWith('.question')));
+  // Retroactive fallback: If questions array is empty but this message was saved with an artifact of type question or quiz
+  const isQuestionArtifact = Boolean(artifact && (artifact.type === 'question' || artifact.type === 'quiz' || artifact.name?.endsWith('.question') || artifact.name?.endsWith('.quiz') || artifact.name?.endsWith('.test')));
   if (questions.length === 0 && isQuestionArtifact && artifact?.content) {
     try {
       const parsed = JSON.parse(artifact.content.trim());
       const list = Array.isArray(parsed) ? parsed : (parsed.questions || (parsed.q ? [parsed] : []));
       questions = list
         .filter((x: any) => x && typeof x.q === 'string' && Array.isArray(x.options))
-        .slice(0, 3)
-        .map((x: any) => ({ q: x.q, options: x.options.map(String).filter(Boolean).slice(0, 6), other: x.other !== false }));
+        .map((x: any) => ({
+          q: x.q,
+          options: x.options.map(String).filter(Boolean),
+          answer: typeof x.answer === 'number' ? x.answer : undefined,
+          explanation: x.explanation,
+          other: x.other !== false
+        }));
+      if (parsed.title) quizTitle = parsed.title;
+      if (artifact.type === 'quiz' || questions.some((q: any) => q.answer !== undefined)) isQuiz = true;
     } catch {}
   }
 
@@ -928,9 +935,22 @@ const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateA
         </div>
       )}
 
-      {/* Decision questions with options (only answerable on the latest message) */}
-      {questions.length > 0 && !isStreaming && canReply && onQuickReply && (
-        <QuestionCard questions={questions} onAnswer={onQuickReply} />
+      {/* Decision questions or Interactive Quizzes */}
+      {questions.length > 0 && !isStreaming && (
+        isQuiz ? (
+          <QuizCard
+            title={quizTitle}
+            questions={questions}
+            onAnswer={onQuickReply}
+            disabled={isStreaming}
+          />
+        ) : (
+          <QuestionCard
+            questions={questions}
+            onAnswer={onQuickReply || (() => {})}
+            disabled={!canReply || !onQuickReply}
+          />
+        )
       )}
 
       {/* Web image grid — shown after AI response when search grounding returned images */}
@@ -1062,6 +1082,9 @@ const ChatMessage = memo(({ role, content, artifact, onArtifactClick, onIterateA
         ) : artifact.type === 'pptx' && artifact.slides && artifact.slides.length > 0 ? (
           /* Compiled PowerPoint — slide viewer inline, .pptx download */
           <SlideDeckCard artifact={artifact} />
+        ) : (artifact.type === 'pdf' || (artifact.url && artifact.url.toLowerCase().endsWith('.pdf'))) && (artifact.url || (artifact.pages && artifact.pages.length > 0) || (artifact.slides && artifact.slides.length > 0)) ? (
+          /* Compiled PDF — editorial document viewer inline, .pdf download */
+          <PdfDocumentCard artifact={artifact} />
         ) : artifact.type === 'video' && artifact.url ? (
           /* Generated clip (DZ-Motion) — plays inline */
           <VideoCard artifact={artifact} />

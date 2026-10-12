@@ -28,6 +28,7 @@ import { hasLocalBrowser } from '@/services/api';
 import { ProjectMenu, type ChatMode } from '@/components/deiza/BarMenu';
 import type { Effort } from '@/components/deiza/ModelSelector';
 import { applyWorkEvent, workFromMeta, type WorkState, type WorkShot } from '@/lib/workTypes';
+import { workSendOptions, type WorkSendOptions } from '@/lib/workBridge';
 import AmbientRose from '@/components/deiza/AmbientRose';
 import DeizaLoader from '@/components/deiza/DeizaLoader';
 import { toast } from 'sonner';
@@ -308,8 +309,8 @@ const Workspace = () => {
   // Tasks keep running server-side even if this device closed the chat / laptop
   // slept: the sidebar + message area resume watching live, and stop cancels it.
   const remoteGensRef = useRef<Record<string, { status: string; content: string; thinking: string; ts: number }>>({});
-  const [remoteGenDetail, setRemoteGenDetail] = useState<{ status: string; content: string; thinking: string; ts: number; image?: { aspect: string; started?: number } } | null>(null);
-  const remoteGenDetailRef = useRef<{ status: string; content: string; thinking: string; ts: number; image?: { aspect: string; started?: number } } | null>(null);
+  const [remoteGenDetail, setRemoteGenDetail] = useState<Awaited<ReturnType<typeof api.getGeneration>>>(null);
+  const remoteGenDetailRef = useRef<Awaited<ReturnType<typeof api.getGeneration>>>(null);
   // image forge v1: the chat whose answer this device is streaming right now, and whether the
   // next reload must reveal (not just show) an image that finished in the background.
   const streamChatIdRef = useRef<number | null>(null);
@@ -1000,17 +1001,22 @@ const artifactMarker = latestRaw.indexOf('```artifact');
   const demoMessageCount = isDemoMode ? messages.filter(m => m.role === 'user').length : 0;
 
   /** Answer picked from an inline question card: goes out as a normal user message */
-  const handleSendRef = useRef<((content: string, files?: any[]) => void) | null>(null);
+  const handleSendRef = useRef<((content: string, files?: any[], options?: WorkSendOptions) => boolean | void) | null>(null);
+  const handleChatSelectRef = useRef<(chatId: number) => Promise<void>>();
+  const [pendingBrowserSend, setPendingBrowserSend] = useState<{ chatId: number; text: string; options: WorkSendOptions } | null>(null);
   const handleQuickReply = useCallback((text: string) => {
     haptic('light');
     handleSendRef.current?.(text);
   }, [haptic]);
 
-  const handleSend = (content: string, files: any[] = []) => {
+  const handleSend = (content: string, files: any[] = [], options?: WorkSendOptions) => {
     const trimmed = content.trim();
-    if (!trimmed && (!files || files.length === 0)) return;
+    if (!trimmed && (!files || files.length === 0)) return false;
     const finalContent = trimmed || (files.some((f: any) => f.is_image || (f.mime_type || '').startsWith('image/')) ? 'Describe o analiza esta imagen' : 'Analiza los archivos adjuntos');
-    if (isStreamingRef.current) return; // Prevent double-send while streaming
+    if (isStreamingRef.current) return false; // Prevent double-send while streaming
+    const turnModel = options?.model || model;
+    if (options?.model) setModel(options.model);
+    if (options?.effort) setEffort(options.effort);
     isStreamingRef.current = true; // Lock immediately — before any async work
     setStreamingThinkingSteps([]);
     remoteGenDetailRef.current = null;
@@ -1024,7 +1030,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
           duration: 9000,
         }
       );
-      return;
+      return false;
     }
 
     const userMessage: Message = {
@@ -1167,7 +1173,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     streamLocalRef.current = false;
     streamVisibleRef.current = true;
     cancelStreamRef.current = api.streamMessage(
-      content, currentChatId, model, language,
+      content, currentChatId, turnModel, language,
       (chunk) => { handleStreamChunk(chunk, streamingId); },
       (newChatId, artifact, msgId) => {
         // Cancel any pending throttled update and flush final content immediately.
@@ -1330,7 +1336,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
           m.id === streamingId ? { ...m, images } : m
         ));
       },
-      modePref === 'chat' ? undefined : modePref,  // mode: auto (Deiza decides) or work
+      options?.mode || (modePref === 'chat' ? undefined : modePref),
       undefined,  // agentType
       (sources) => {
         setMessages(prev => prev.map(m =>
@@ -1395,6 +1401,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
       ];
       void extractAndStoreMemory(memoryMessages, currentChatId, language);
     }
+    return true;
   };
 
   handleSendRef.current = handleSend;
@@ -1405,27 +1412,68 @@ const artifactMarker = latestRaw.indexOf('```artifact');
   const detachLocalStream = useCallback((nextChatId: number | null) => {
     if (!isStreamingRef.current) return;
     if (nextChatId != null && streamChatIdRef.current === nextChatId) return;
-    if (streamLocalRef.current) { streamVisibleRef.current = false; return; }
     if (cancelStreamRef.current) { cancelStreamRef.current(); cancelStreamRef.current = null; }
     if (streamingThrottleRef.current) { clearTimeout(streamingThrottleRef.current); streamingThrottleRef.current = null; }
     isStreamingRef.current = false;
     streamingMsgIdRef.current = null;
     streamChatIdRef.current = null;
+    streamLocalRef.current = false;
+    streamVisibleRef.current = true;
     lastLocalDoneRef.current = 0;
     setIsLoading(false);
     setStreamingThinkingSteps([]);
   }, []);
 
   // local browser v1: Work's agent asked this computer's browser for an action; run it and answer.
+  const localBrowserResults = useRef(new Map<string, { result: Promise<any>; replying?: Promise<void>; at: number }>());
   const runLocalBrowser = useCallback(async (ev: any) => {
     const bridge = (window as any).deizaDesktop;
     const chatId = Number(ev?.chat_id);
     if (!bridge?.workBrowser || !chatId || !ev?.id) return;
-    let result: any;
-    try { result = await bridge.workBrowser({ chatId, action: ev.action, args: ev.args || {} }); }
-    catch (e: any) { result = { error: String(e?.message || e || 'local browser error').slice(0, 300) }; }
-    try { await api.workLocalResult(chatId, ev.id, result || { error: 'no answer' }); } catch { /* the agent times out and says so */ }
+    const key = `${chatId}:${ev.id}`;
+    const cache = localBrowserResults.current;
+    for (const [id, entry] of cache) if (Date.now() - entry.at > 180000) cache.delete(id);
+    let entry = cache.get(key);
+    if (!entry) {
+      const result = Promise.resolve().then(() => bridge.workBrowser({ chatId, requestId: ev.id, action: ev.action, args: ev.args || {} }))
+        .catch((e: any) => ({ error: String(e?.message || e || 'local browser error').slice(0, 300) }));
+      entry = { result, at: Date.now() };
+      cache.set(key, entry);
+    }
+    if (entry.replying) return entry.replying;
+    const current = entry;
+    current.replying = current.result.then(result => api.workLocalResult(chatId, ev.id, result || { error: 'no answer' }))
+      .catch(() => { /* Keep the result: poll retries delivery, never repeats a click or submit. */ })
+      .finally(() => { current.replying = undefined; });
+    return current.replying;
   }, []);
+
+  // Local browser commands also arrive while another chat is open or the web view is hidden.
+  useEffect(() => {
+    if (!isAuthenticated || isDemoMode || !hasLocalBrowser()) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    let lastStatusAt = 0;
+    const knownChats = new Set<number>();
+    const tick = async () => {
+      try {
+        const pending = await api.workLocalPending();
+        if (alive) for (const ev of pending.requests || []) { knownChats.add(Number(ev.chat_id)); void runLocalBrowser(ev); }
+        // An off-screen browser still needs its running/stopped state after its last action.
+        if (alive && Date.now() - lastStatusAt > 5000) {
+          lastStatusAt = Date.now();
+          const gens = await api.getGenerations();
+          if (alive) for (const id of knownChats) {
+            const running = !!gens[String(id)] || (streamChatIdRef.current === id && isStreamingRef.current);
+            try { (window as any).deizaDesktop?.workState?.(id, { running }); } catch { /* app closed */ }
+          }
+        }
+      } catch { /* Network recovery continues on the next poll. */ }
+      if (alive) timer = setTimeout(tick, 1500);
+    };
+    void tick();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [isAuthenticated, isDemoMode, runLocalBrowser]);
 
   // work continuity v1: what you write while Work runs goes into the job (read at its next step).
   const workSay = useCallback((chatId: number | null | undefined, item: { kind: string; text: string }) => {
@@ -1433,9 +1481,14 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     if (!chatId || !item?.text || typeof bridge?.workSay !== 'function') return;
     try { bridge.workSay(chatId, { kind: item.kind, text: String(item.text).slice(0, 500) }); } catch { /* app closed */ }
   }, []);
-  const handleSteer = useCallback(async (text: string, target?: number) => {
+  const acknowledgeWorkSend = useCallback((options: WorkSendOptions, result: Record<string, unknown>) => {
+    if (!options.requestId) return;
+    try { (window as any).deizaDesktop?.workSteerResult?.(options.requestId, result); } catch { /* app closed */ }
+  }, []);
+  const handleSteer = useCallback(async (text: string, target?: number, rawOptions?: WorkSendOptions) => {
+    const options = rawOptions ? workSendOptions(rawOptions) : {};
     const cid = target || currentChatIdRef.current;
-    if (!cid) return;
+    if (!cid) { acknowledgeWorkSend(options, { ok: false, error: t('ws.err.unavailable') }); return false; }
     const onScreen = cid === currentChatIdRef.current;
     const tmpId = Date.now();
     if (onScreen) {
@@ -1448,22 +1501,41 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     }
     try {
       const r = await api.workSteer(cid, text);
+      const stillOnScreen = cid === currentChatIdRef.current;
       if (r?.idle) {
         // The job had just finished: the message becomes a normal one.
-        if (onScreen) { setMessages(prev => prev.filter(m => m.id !== tmpId)); handleSendRef.current?.(text); }
-        return;
+        if (stillOnScreen) {
+          setMessages(prev => prev.filter(m => m.id !== tmpId));
+          const accepted = handleSendRef.current?.(text, [], options) === true;
+          acknowledgeWorkSend(options, { ok: accepted, idle: true, ...(!accepted ? { error: t('ws.err.unavailable') } : {}) });
+          return accepted;
+        }
+        await handleChatSelectRef.current?.(cid);
+        if (currentChatIdRef.current !== cid) throw new Error('chat_unavailable');
+        setPendingBrowserSend({ chatId: cid, text, options });
+        return true;
       }
-      workSay(cid, { kind: 'user', text });
+      if (!options.requestId) workSay(cid, { kind: 'user', text });
+      if (options.model) { if (stillOnScreen) setModelState(options.model); try { localStorage.setItem(`deiza_model_${cid}`, options.model); } catch {} }
+      if (options.effort) setEffort(options.effort);
+      acknowledgeWorkSend(options, { ok: true, queued: true });
+      return true;
     } catch {
-      if (onScreen) { setMessages(prev => prev.filter(m => m.id !== tmpId)); setRestoredInput(text); }
+      if (cid === currentChatIdRef.current) { setMessages(prev => prev.filter(m => m.id !== tmpId)); setRestoredInput(text); }
       toast.error(t('ws.err.unavailable'));
+      acknowledgeWorkSend(options, { ok: false, error: t('ws.err.unavailable') });
+      return false;
     }
-  }, [t, workSay]);
+  }, [t, workSay, acknowledgeWorkSend]);
   useEffect(() => {
     const bridge = (window as any).deizaDesktop;
     if (typeof bridge?.onWorkSteer !== 'function') return;
-    return bridge.onWorkSteer((chatId: number, text: string) => { void handleSteer(text, chatId); });
+    return bridge.onWorkSteer((chatId: number, text: string, options?: WorkSendOptions) => { void handleSteer(text, chatId, options); });
   }, [handleSteer]);
+  useEffect(() => {
+    if (!currentChatId) return;
+    try { (window as any).deizaDesktop?.workState?.(currentChatId, { running: isLoading || !!remoteGenDetail, model, effort }); } catch { /* app closed */ }
+  }, [currentChatId, isLoading, remoteGenDetail, model, effort]);
 
   const handleStop = useCallback(() => {
     // Also abort a server-side generation for this chat (covers the case where
@@ -1498,7 +1570,8 @@ const artifactMarker = latestRaw.indexOf('```artifact');
       if (last && last.role === 'assistant' && (last.id === sid || !last.content)) {
         const codeStart = partial.indexOf('```');
         const shown = (codeStart >= 0 ? partial.substring(0, codeStart) : partial).trim();
-        if (shown) next[next.length - 1] = { ...last, content: shown, artifact: streamingArtifactRef.current || last.artifact, stopped: true };
+        if (shown || last.work) next[next.length - 1] = { ...last, content: shown, artifact: streamingArtifactRef.current || last.artifact, stopped: true,
+          work: last.work ? applyWorkEvent(last.work, { type: 'state', status: 'cancelled', reason: 'cancelled' }) : undefined };
         else next.pop();
       }
       return next;
@@ -1602,6 +1675,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     setActiveArtifact(null);
     setArtifactHistory([]);
     setArtifactHistoryIndex(-1);
+    setRestoredInput('');
     setWorkShot(null);
     setWorkPanelOpen(false);
     setWorkMode(false);
@@ -1674,6 +1748,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
     haptic('selection');
     detachLocalStream(chatId);
     if (isMobile) setSidebarOpen(false);
+    setRestoredInput('');
     // Persist chat in URL and localStorage so F5 / refresh stays on this chat
     currentChatIdRef.current = chatId;
     setCurrentChatId(chatId);
@@ -1761,6 +1836,16 @@ const artifactMarker = latestRaw.indexOf('```artifact');
       }
     }
   };
+  handleChatSelectRef.current = handleChatSelect;
+  useEffect(() => {
+    if (!pendingBrowserSend) return;
+    setPendingBrowserSend(null);
+    if (currentChatId !== pendingBrowserSend.chatId) {
+      acknowledgeWorkSend(pendingBrowserSend.options, { ok: false, error: t('ws.err.unavailable') });
+      return;
+    }
+    void handleSteer(pendingBrowserSend.text, pendingBrowserSend.chatId, pendingBrowserSend.options);
+  }, [pendingBrowserSend, currentChatId, handleSteer, acknowledgeWorkSend, t]);
 
   /** Delete without confirm — used by the mobile action sheet (the sheet IS the confirmation) */
   const performDeleteChat = async (chatId: number) => {
@@ -2007,20 +2092,34 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                   /* image forge v1: back on a chat whose image is still being made */
                   <ChatMessage role="ai" content="" isStreaming
                     imagePending={{ ...remoteGenDetail.image, label: remoteGenDetail.thinking }} />
-                ) : remoteGenDetail.content ? (
+                ) : (
                   <>
-                    {remoteGenDetail.thinking && (
-                      <div className="flex items-center gap-2 px-1 pb-2 text-xs font-body text-foreground/60">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                        {remoteGenDetail.thinking}
-                        <span className="text-border/40">·</span>
-                        <span className="text-muted-foreground/50">{t('ws.remote.working')}</span>
+                    {remoteGenDetail.work && remoteGenDetail.work.length > 0 && (
+                      <div className="mb-3">
+                        <WorkTrace
+                          work={workFromMeta(remoteGenDetail.work, false)}
+                          live
+                          thinking={remoteGenDetail.thinking}
+                          onOpenComputer={workSide ? undefined : () => setWorkPanelOpen(true)}
+                        />
                       </div>
                     )}
-                    <ChatMessage role="ai" content={remoteGenDetail.content} isStreaming />
+                    {remoteGenDetail.content ? (
+                      <>
+                        {remoteGenDetail.thinking && !remoteGenDetail.work?.length && (
+                          <div className="flex items-center gap-2 px-1 pb-2 text-xs font-body text-foreground/60">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                            {remoteGenDetail.thinking}
+                            <span className="text-border/40">·</span>
+                            <span className="text-muted-foreground/50">{t('ws.remote.working')}</span>
+                          </div>
+                        )}
+                        <ChatMessage role="ai" content={remoteGenDetail.content} isStreaming artifact={remoteGenDetail.artifact} />
+                      </>
+                    ) : !remoteGenDetail.work?.length ? (
+                      <DeizaLoader language={language} model={model} thinkingSteps={remoteGenDetail.thinking ? [remoteGenDetail.thinking] : []} />
+                    ) : null}
                   </>
-                ) : (
-                  <DeizaLoader language={language} model={model} thinkingSteps={remoteGenDetail.thinking ? [remoteGenDetail.thinking] : []} />
                 )}
               </div>
             ) : null}
@@ -2090,6 +2189,7 @@ const artifactMarker = latestRaw.indexOf('```artifact');
             onModelChange={setModel}
             disabled={showNameDialog}
             busy={composerBusy}
+            chatId={currentChatId}
             onSteer={workMode && composerBusy && currentChatId && !isDemoMode ? (text: string) => { void handleSteer(text); } : undefined}
             restoredValue={restoredInput}
             isDemo={isDemoMode}
@@ -2467,7 +2567,10 @@ const artifactMarker = latestRaw.indexOf('```artifact');
 
               {(isMobile || workMax) && workMode && workPanelOpen && !!currentChatId && (
                 <WorkPanel overlay chatId={currentChatId} shot={workShot} onShot={setWorkShot} files={workFiles}
-                  agentBusy={isLoading} maximized={workMax} onToggleMax={isMobile ? undefined : () => setWorkMax(v => !v)}
+                  agentBusy={isLoading || !!remoteGenDetail} maximized={workMax} onToggleMax={isMobile ? undefined : () => setWorkMax(v => !v)}
+                  model={model} effort={effort} userPlan={userPlan} onModelChange={setModel} onEffortChange={setEffort}
+                  onSend={text => handleSteer(text, currentChatId, { model, effort, mode: 'work' })} onStop={handleStop}
+                  work={remoteGenDetail?.work ? workFromMeta(remoteGenDetail.work, false) : messages.filter(m => m.work).slice(-1)[0]?.work}
                   onClose={() => { workPanelDismissedRef.current = true; setWorkPanelOpen(false); setWorkMax(false); }} />
               )}
               {/* Mobile artifact overlay — bottom sheet */}
@@ -2508,7 +2611,10 @@ const artifactMarker = latestRaw.indexOf('```artifact');
                     shot={workShot}
                     onShot={setWorkShot}
                     files={workFiles}
-                    agentBusy={isLoading}
+                    agentBusy={isLoading || !!remoteGenDetail}
+                    model={model} effort={effort} userPlan={userPlan} onModelChange={setModel} onEffortChange={setEffort}
+                    onSend={text => handleSteer(text, currentChatId, { model, effort, mode: 'work' })} onStop={handleStop}
+                    work={remoteGenDetail?.work ? workFromMeta(remoteGenDetail.work, false) : messages.filter(m => m.work).slice(-1)[0]?.work}
                     maximized={false}
                     onToggleMax={() => setWorkMax(true)}
                     onClose={() => { workPanelDismissedRef.current = true; setWorkPanelOpen(false); }}

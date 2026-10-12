@@ -35,6 +35,9 @@ export interface WorkState {
   page?: { url: string; title?: string };
   startedAt?: number;
   endedAt?: number;
+  status?: 'running' | 'completed' | 'interrupted' | 'cancelled';
+  reason?: string;
+  checkpoint?: { round: number; max_rounds: number; elapsed_seconds: number; max_seconds: number; steps?: number };
 }
 
 export interface WorkShot {
@@ -52,6 +55,23 @@ export function applyWorkEvent(prev: WorkState | undefined, ev: any): WorkState 
   const s: WorkState = prev ? { ...prev, items: [...prev.items], files: [...prev.files] } : emptyWork();
   if (!ev || typeof ev !== 'object') return s;
   switch (ev.type) {
+    case 'state':
+      if (['running', 'completed', 'interrupted', 'cancelled'].includes(ev.status)) {
+        s.status = ev.status;
+        s.reason = ev.reason ? String(ev.reason) : undefined;
+        if (ev.status !== 'running') {
+          s.endedAt = Date.now();
+          s.items = s.items.map(x => x.kind === 'step' && x.status === 'run'
+            ? { ...x, status: 'err', error: s.reason || 'interrupted' } : x);
+        }
+      }
+      break;
+    case 'checkpoint':
+      s.checkpoint = { round: Number(ev.round) || 0, max_rounds: Number(ev.max_rounds) || 0,
+        elapsed_seconds: Number(ev.elapsed_seconds) || 0, max_seconds: Number(ev.max_seconds) || 0, steps: Number(ev.steps) || 0 };
+      if (ev.page?.url) s.page = { url: String(ev.page.url), title: ev.page.title };
+      if (Array.isArray(ev.plan)) s.plan = ev.plan;
+      break;
     case 'step': {
       const step: WorkStep = {
         kind: 'step', id: String(ev.id), tool: String(ev.tool || ''), label: String(ev.label || ''),
@@ -82,11 +102,13 @@ export function applyWorkEvent(prev: WorkState | undefined, ev: any): WorkState 
 }
 
 /** Rebuilds the trace saved in message meta (`meta.work`, a list of events without screenshots). */
-export function workFromMeta(list: any): WorkState | undefined {
+export function workFromMeta(list: any, history = true): WorkState | undefined {
   if (!Array.isArray(list) || list.length === 0) return undefined;
   let s: WorkState = { items: [], files: [] };
   for (const ev of list) s = applyWorkEvent(s, ev);
-  // A trace loaded from history is finished: nothing is still running.
-  s.items = s.items.map(x => (x.kind === 'step' && x.status === 'run' ? { ...x, status: 'ok' } : x));
+  if (!history) return s;
+  // A saved pending action has no verified result. Never give it a success checkmark.
+  if (s.status === 'running' || (!s.status && s.items.some(x => x.kind === 'step' && x.status === 'run'))) s.status = 'interrupted';
+  s.items = s.items.map(x => (x.kind === 'step' && x.status === 'run' ? { ...x, status: 'err', error: s.reason || 'interrupted' } : x));
   return s;
 }

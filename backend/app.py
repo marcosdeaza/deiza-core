@@ -111,6 +111,45 @@ def _pptx_artifact(url: str) -> dict:
     return art
 
 
+def _pdf_artifact(url: str, name: str = None) -> dict:
+    """Artifact spec for a compiled PDF: download URL + per-page PNG previews + title."""
+    clean_name = (name or url.split('/')[-1].split('?')[0] or 'documento.pdf')
+    if not clean_name.lower().endswith('.pdf'):
+        clean_name += '.pdf'
+    art = {'name': clean_name, 'type': 'pdf', 'url': url}
+    try:
+        import doc_render as _dr
+        previews = _dr.load_pdf_previews(url)
+        art['pages'] = previews
+        art['slides'] = previews  # compatible with slide viewers
+        meta = _dr.load_pdf_meta(url) or {}
+        if meta.get('title'):
+            art['title'] = meta['title'][:120]
+        if meta.get('pages'):
+            art['pageCount'] = meta['pages']
+    except Exception as e:
+        logger.debug(f'_pdf_artifact loading meta error: {e}')
+    return art
+
+
+def _compile_pdf_artifact(art: dict, language: str = 'es') -> dict:
+    """Compile an inline artifact block of type pdf into a real .pdf with previews."""
+    if not isinstance(art, dict) or art.get('url'):
+        return art
+    content = art.get('content')
+    if not content:
+        return art
+    try:
+        import doc_render as _dr
+        name = art.get('name') or 'documento.pdf'
+        fid = _dr.build_pdf(content, filename=name, language=language)
+        out = _pdf_artifact('/api/files/' + fid, name=name)
+        return out
+    except Exception as e:
+        logger.warning(f'inline pdf artifact could not be compiled: {e}')
+        return art
+
+
 def _artifact_delivery_message(art_type: str, language: str = 'es') -> str:
     """Polite delivery message when an artifact is generated with little or no prose."""
     lang_es = (language or 'es').startswith('es')
@@ -925,7 +964,13 @@ def send_message_stream():
                     'content': '', 'thinking': 'Pensando...' if language == 'es' else 'Thinking...',
                     'sources': [], 'images': [],
                 }
-                _redis_client.setex(_init_gen_key, 3600, json.dumps(_init_payload))
+                if mode == 'work':
+                    import work_agent as _initial_work
+                    _init_payload['mode'] = 'work'
+                    _initial_ttl = _initial_work.MAX_SECONDS + 600
+                else:
+                    _initial_ttl = 3600
+                _redis_client.setex(_init_gen_key, _initial_ttl, json.dumps(_init_payload))
             except Exception:
                 pass
         chat_project_id = chat.project_id
@@ -1028,11 +1073,19 @@ def send_message_stream():
         _stream_sources = []
         _stream_images = []
         _stream_pptx = None
+        _stream_pdf = None
+        _stream_shot = None
+        _stream_plan = None
         _stream_handoff = None
         _stream_work = []  # deiza work v1: trace of the Work agent (no screenshots)
         _stream_thinking = ('Pensando...' if language == 'es' else 'Thinking...')
         client_gone = False
         _completed_normally = False
+        _work_billed_units = 0
+        _stream_checkpoint = None
+        _work_status = 'running'
+        _work_reason = None
+        _generation_started = time.time()
 
         # keepalive pump v1: the AI generator runs in a helper thread and hands chunks over a
         # queue, so this generator can emit ": ping" while the model is silent (deck authoring,
@@ -1042,6 +1095,7 @@ def send_message_stream():
         _PING_EVERY = 12.0
         _pq = _q.Queue()
         _pstop = _thr.Event()
+        _usage_lock = _thr.Lock()
         _pump_started = False
 
         def _pump_start(_g):
@@ -1104,20 +1158,33 @@ def send_message_stream():
             return _box.get('r')
 
         _gen_key = f'deiza:gen:{new_chat_id}' if _redis_client else None
+        _gen_ttl = 3600
+        if mode == 'work':
+            import work_agent as _work_runtime
+            _gen_ttl = _work_runtime.MAX_SECONDS + 600
 
         def _gen_save(**extra):
             if not _gen_key:
                 return
             try:
+                _cur_art = locals().get('_candidate_art') or _stream_pptx or _stream_pdf
+                _stop_reason = _gen_stop_reason()
                 _p = {
-                    'status': 'generating', 'chat_id': new_chat_id, 'ts': time.time(),
+                    'status': ('cancelled' if _stop_reason == 'cancelled' else 'interrupted') if _stop_reason else 'generating',
+                    'chat_id': new_chat_id, 'ts': time.time(),
+                    'started_at': _generation_started,
                     'content': full_content[-120000:] if full_content else '',
                     'thinking': _stream_thinking if _stream_thinking else '',
                     'sources': _stream_sources or [], 'images': (_stream_images or [])[:4],
                     'work': _stream_work[-80:],
+                    'shot': _stream_shot,
+                    'plan': _stream_plan,
+                    'artifact': _cur_art,
+                    'mode': mode,
+                    'checkpoint': _stream_checkpoint,
                 }
                 _p.update(extra)
-                _redis_client.setex(_gen_key, 3600, json.dumps(_p))
+                _redis_client.setex(_gen_key, _gen_ttl, json.dumps(_p))
             except Exception:
                 pass
 
@@ -1132,10 +1199,74 @@ def send_message_stream():
             if not _gen_key:
                 return False
             try:
+                _cancel_ts = _redis_client.get(_gen_key + ':cancel')
+                if _cancel_ts and float(_cancel_ts) >= _generation_started:
+                    return True
                 _v = _redis_client.get(_gen_key)
                 return bool(_v) and (json.loads(_v) or {}).get('status') == 'cancelled'
             except Exception:
                 return False
+
+        def _gen_stop_reason():
+            if _gen_cancelled():
+                return 'cancelled'
+            if not _gen_key:
+                return None
+            try:
+                _stop = json.loads(_redis_client.get(_gen_key + ':stop') or '{}')
+                if float(_stop.get('ts', 0)) >= _generation_started and _stop.get('reason'):
+                    return _stop['reason']
+            except Exception:
+                pass
+            return None
+
+        _work_control = {'stop_event': _pstop, 'is_cancelled': _gen_cancelled, 'interrupt_reason': _gen_stop_reason,
+                         'generation_started': _generation_started}
+
+        def _work_charge(force=False):
+            """Charge newly reported usage at round boundaries, and the remaining delta at finalization."""
+            nonlocal _work_billed_units
+            if mode != 'work' or _mem_extract or (not force and not _usage_acc.get('calls')):
+                return
+            with _usage_lock:
+                from models import User as _WorkUser
+                _wu = _WorkUser.query.get(user_id)
+                if not _wu:
+                    return
+                _total = _chat_units(len(full_content))
+                _delta = max(0, _total - _work_billed_units)
+                if _delta:
+                    _wu.record_usage(_delta, model)
+                    db.session.commit()
+                    _work_billed_units += _delta
+
+        def _work_usage_gate():
+            _work_charge()
+            from models import User as _WorkGateUser
+            _wu = _WorkGateUser.query.get(user_id)
+            if not _wu:
+                return False
+            _allowed, _usage = _wu.usage_gate()
+            _model_allowed, _reason = _wu.can_use_model_with_sublimit(model)
+            return _allowed and _model_allowed and _usage.get('state') not in ('grace', 'exhausted')
+
+        def _work_terminal(status, reason=None):
+            if mode != 'work':
+                return []
+            return _step('\x00WORK:' + json.dumps({'type': 'state', 'status': status, **({'reason': reason} if reason else {})}) + '\x00')
+
+        def _gen_finish(status, reason=None):
+            if mode == 'work' and _gen_key:
+                _stop_reason = _gen_stop_reason()
+                if _stop_reason:
+                    status, reason = ('cancelled' if _stop_reason == 'cancelled' else 'interrupted'), _stop_reason
+                _gen_save(status=status, reason=reason, checkpoint=_stream_checkpoint)
+                try:
+                    _redis_client.expire(_gen_key, 300)
+                except Exception:
+                    pass
+            else:
+                _gen_clear()
 
         def _strip_artifact_block(_text):
             # the prose around the block; the block's real end is found string-aware by the mapper
@@ -1143,7 +1274,7 @@ def send_message_stream():
             return strip_artifact_blocks(_text)
 
         import re as _re_sse
-        _sse = _re_sse.compile(r'\x00PPTX:[^\x00]*\x00')
+        _sse = _re_sse.compile(r'\x00(PPTX|PDF):[^\x00]*\x00')
 
         def _step(chunk):
             nonlocal full_content, _stream_thinking
@@ -1182,17 +1313,34 @@ def send_message_stream():
                 except Exception:
                     return []
                 if isinstance(_w, dict):
-                    if _w.get('type') == 'step':
+                    if _w.get('type') == 'state':
+                        nonlocal _work_status, _work_reason
+                        _work_status = _w.get('status', 'running')
+                        _work_reason = _w.get('reason')
+                        _stream_work[:] = [x for x in _stream_work if x.get('type') != 'state'] + [dict(_w)]
+                        if _work_status in ('interrupted', 'cancelled'):
+                            for _pending in _stream_work:
+                                if _pending.get('type') == 'step' and _pending.get('status') == 'run':
+                                    _pending.update(status='err', error=_work_reason or _work_status)
+                    elif _w.get('type') == 'checkpoint':
+                        nonlocal _stream_checkpoint
+                        _stream_checkpoint = dict(_w)
+                        _stream_work[:] = [x for x in _stream_work if x.get('type') != 'checkpoint'] + [dict(_w)]
+                    elif _w.get('type') == 'step':
                         _old = next((x for x in _stream_work if x.get('type') == 'step' and x.get('id') == _w.get('id')), None)
                         if _old:
                             _old.update(_w)
                         else:
                             _stream_work.append(dict(_w))
                     elif _w.get('type') == 'plan':
+                        nonlocal _stream_plan
+                        _stream_plan = _w.get('items')
                         _stream_work[:] = [x for x in _stream_work if x.get('type') != 'plan'] + [dict(_w)]
                     elif _w.get('type') in ('file', 'note', 'preview'):
                         _stream_work.append(dict(_w))
                     elif _w.get('type') == 'shot' and _w.get('url'):
+                        nonlocal _stream_shot
+                        _stream_shot = _w.get('img')
                         _stream_work[:] = [x for x in _stream_work if x.get('type') != 'page'] + [{'type': 'page', 'url': _w.get('url'), 'title': _w.get('title', '')}]
                     return [{'work': _w}]
                 return []
@@ -1202,6 +1350,18 @@ def send_message_stream():
                 if _pptx_url.startswith('/api/files/'):
                     _stream_pptx = _pptx_artifact(_pptx_url)
                 return []
+            if chunk.startswith('\x00PDF:') and chunk.endswith('\x00'):
+                nonlocal _stream_pdf
+                _pdf_raw = chunk[len('\x00PDF:'):-1].strip()
+                _pdf_url, _, _pdf_q = _pdf_raw.partition('?')
+                _pdf_name = None
+                if _pdf_q:
+                    import urllib.parse as _up
+                    _pdf_name = dict(_up.parse_qsl(_pdf_q)).get('name')
+                if _pdf_url.startswith('/api/files/'):
+                    _stream_pdf = _pdf_artifact(_pdf_url, name=_pdf_name)
+                    return [{'artifact': _stream_pdf}]
+                return []
             full_content += chunk
             return [{'chunk': chunk}]
 
@@ -1210,19 +1370,30 @@ def send_message_stream():
             from models import Message as _DBM, User as _DBU
             _raw_content_len = len(full_content)
             _text = _sse.sub('', full_content).strip()
-            _artifact = _stream_pptx if _stream_pptx else (ai_service._extract_artifact(_text) or _tolerant_artifact(_text))
+            _artifact = _stream_pptx if _stream_pptx else (_stream_pdf if _stream_pdf else (ai_service._extract_artifact(_text) or _tolerant_artifact(_text)))
             if isinstance(_artifact, dict) and not _artifact.get('type') and _artifact.get('kind'):  # deiza work v1: models sometimes write kind
                 _artifact['type'] = _artifact.pop('kind')
             if _artifact:
                 _text = _strip_artifact_block(_text)
-                # the connected path already compiled it (with keepalive pings); never compile twice
-                _artifact = artifact if artifact else _compile_pptx_artifact(_artifact)
+                if not artifact:
+                    if _artifact.get('type') == 'pptx':
+                        _artifact = _compile_pptx_artifact(_artifact)
+                    elif _artifact.get('type') == 'pdf':
+                        _artifact = _compile_pdf_artifact(_artifact, language)
+                else:
+                    _artifact = artifact
             else:
                 _artifact = artifact if artifact else ai_service._extract_code_block(_text)
             if not _text.strip():
                 if partial:
-                    return None, None
-                if _artifact:
+                    if _stream_work:
+                        _text = ('Trabajo detenido. El progreso está guardado para continuar.' if language == 'es' else
+                                 'Work stopped. Progress is saved so you can continue.')
+                    elif _artifact:
+                        _text = _artifact_delivery_message(_artifact.get('type'), language)
+                    else:
+                        return None, None
+                elif _artifact:
                     _text = _artifact_delivery_message(_artifact.get('type'), language)
                 else:
                     _text = ('No he podido generar la respuesta esta vez. '
@@ -1247,7 +1418,10 @@ def send_message_stream():
             db.session.commit()
             _up = _DBU.query.get(user_id)
             if _up and not _mem_extract and not _tokens_recorded:
-                _up.record_usage(_estimated_tokens, model)
+                if mode == 'work':
+                    _work_charge(force=True)
+                else:
+                    _up.record_usage(_estimated_tokens, model)
                 logger.info(f'Chat usage user={user_id} model={model} units={_estimated_tokens} reported={_usage_acc or "estimate"} grace={_chat_grace}')
             _tokens_recorded = True
             db.session.commit()
@@ -1473,8 +1647,12 @@ def send_message_stream():
                 yield f"data: {json.dumps({'error': _err})}\n\n"
             return
 
+        from conversation_context import chat_silence_timeout
+        _MAX_SILENCE = 240 if mode == 'work' else chat_silence_timeout(model, liquid55_enabled(), model_variant)
+        _MAX_TOTAL = _work_runtime.MAX_SECONDS + 330 if mode == 'work' else 600
+        _gen_start = time.time()
+        _last_content = _gen_start
         try:
-            yield f"data: {json.dumps({'chat_id': new_chat_id})}\n\n"
             _last_redis = time.time()
             prior_history = history[:-1] if (history and getattr(history[-1], 'role', '') == 'user') else history
             if mode == 'work':
@@ -1484,7 +1662,7 @@ def send_message_stream():
                                           project_context=project_context, memory_context=_stream_memory_ctx,
                                           custom_instructions=custom_instructions, skills_context=_skills_ctx,
                                           usage_sink=_usage_acc, effort=effort, variant=model_variant,
-                                          local_browser=_local_browser)
+                                          local_browser=_local_browser, control=_work_control, usage_gate=_work_usage_gate)
             else:
               _gen = ai_service.stream_message(message=message, history=prior_history, model=model, language=language,
                                              files=files_data, mode=mode, agent_type=agent_type,
@@ -1492,27 +1670,38 @@ def send_message_stream():
                                              variant=model_variant, fallback=chain_fallback,
                                              custom_instructions=custom_instructions,
                                              skills_context=_skills_ctx, usage_sink=_usage_acc, effort=effort)
-            _pump_start(_gen)
+            yield f"data: {json.dumps({'chat_id': new_chat_id})}\n\n"
             if _gen_key:
                 _gen_save()
-            _gen_start = time.time()
-            _last_content = time.time()
-            from conversation_context import chat_silence_timeout
-            _MAX_SILENCE = 240 if mode == 'work' else chat_silence_timeout(model, liquid55_enabled(), model_variant)  # respect the effective Liquid generation
-            _MAX_TOTAL = 1500 if mode == 'work' else 600   # 10 min max generation (25 for Work jobs)
+            _pump_start(_gen)
             while True:
+                _stop_reason = _gen_stop_reason()
+                if _stop_reason:
+                    _work_control['cancelled'] = _stop_reason == 'cancelled'
+                    _pump_stop()
+                    if mode == 'work':
+                        raise _work_runtime.WorkInterrupted(_stop_reason)
+                    raise InterruptedError('Generation cancelled')
                 _kind, _chunk = _pump_next(_PING_EVERY)
+                _stop_reason = _gen_stop_reason()
+                if _stop_reason:
+                    _work_control['cancelled'] = _stop_reason == 'cancelled'
+                    _pump_stop()
+                    if mode == 'work':
+                        raise _work_runtime.WorkInterrupted(_stop_reason)
+                    raise InterruptedError('Generation cancelled')
+                if time.time() - _gen_start > _MAX_TOTAL:
+                    _pump_stop()
+                    raise TimeoutError('Generation total deadline exceeded')
                 if _kind == 'end':
+                    if mode == 'work' and _work_status != 'completed':
+                        raise RuntimeError('Work did not complete')
                     break
                 if _kind == 'ping':
                     if time.time() - _last_content > _MAX_SILENCE:
                         logger.warning(f'Generation watchdog: {_MAX_SILENCE}s silence, stopping: chat={new_chat_id}')
                         _pump_stop()
                         raise TimeoutError('Generation silence deadline exceeded')
-                    if time.time() - _gen_start > _MAX_TOTAL:
-                        logger.warning(f'Generation watchdog: {_MAX_TOTAL}s total, stopping: chat={new_chat_id}')
-                        _pump_stop()
-                        raise TimeoutError('Generation total deadline exceeded')
                     # Nothing from the model for a while (deck authoring, PDF render, slow search):
                     # keep bytes flowing so browsers and proxies do not give the stream up for dead.
                     yield ': ping\n\n'
@@ -1541,7 +1730,14 @@ def send_message_stream():
             _sys.stderr.flush()
             logger.error(f'Stream error: {e}', exc_info=True)
             _pump_stop()
-            if full_content:
+            _reason = 'cancelled' if _gen_cancelled() else getattr(e, 'reason', _work_reason or 'connection')
+            if mode == 'work':
+                for _state_ev in _work_terminal('cancelled' if _reason == 'cancelled' else 'interrupted', _reason):
+                    try:
+                        yield f"data: {json.dumps(_state_ev)}\n\n"
+                    except GeneratorExit:
+                        client_gone = True
+            if full_content or (mode == 'work' and _stream_work):
                 try:
                     _persist(partial=True)
                 except Exception:
@@ -1553,23 +1749,36 @@ def send_message_stream():
                     pass
             friendly = ('Deiza no esta disponible en este momento. Intentelo de nuevo en unos segundos.'
                         if language == 'es' else 'Deiza is temporarily unavailable. Please try again in a few seconds.')
+            if mode == 'work':
+                _messages = {
+                    'cancelled': ('Trabajo detenido. El progreso está guardado.', 'Work stopped. Progress is saved.'),
+                    'time_limit': ('He alcanzado el tiempo de esta sesión. El progreso está guardado para continuar.', 'This session reached its time limit. Progress is saved so you can continue.'),
+                    'step_limit': ('He alcanzado los pasos de esta sesión. El progreso está guardado para continuar.', 'This session reached its step limit. Progress is saved so you can continue.'),
+                    'usage_limit': ('He guardado el progreso al alcanzar el límite de uso.', 'Progress is saved because the usage limit was reached.'),
+                }
+                friendly = _messages.get(_reason, ('El trabajo se ha interrumpido. El progreso está guardado para continuar.',
+                                                  'Work was interrupted. Progress is saved so you can continue.'))[0 if language == 'es' else 1]
             try:
-                yield f"data: {json.dumps({'error': friendly})}\n\n"
+                if not client_gone:
+                    yield f"data: {json.dumps({'error': friendly})}\n\n"
             except GeneratorExit:
                 client_gone = True
             finally:
-                _gen_clear()
+                _gen_finish('cancelled' if _reason == 'cancelled' else 'interrupted', _reason)
             return
         finally:
             # Record tokens for aborted/cancelled streams (only while the client is still here).
             # Normal completions are charged once, in _persist() below.
-            if not client_gone and not _completed_normally and not _tokens_recorded and full_content and not _mem_extract:
+            if not client_gone and not _completed_normally and not _tokens_recorded and (full_content or _usage_acc.get('calls')) and not _mem_extract:
                 _abort_tokens = _chat_units(len(full_content))
                 try:
                     from models import User as _AbortUser
                     _au = _AbortUser.query.get(user_id)
                     if _au:
-                        _au.record_usage(_abort_tokens, model)
+                        if mode == 'work':
+                            _work_charge(force=True)
+                        else:
+                            _au.record_usage(_abort_tokens, model)
                         db.session.commit()
                     logger.info(f'Abort tokens: {_abort_tokens} for user {user_id}')
                 except Exception as _fe:
@@ -1581,13 +1790,20 @@ def send_message_stream():
             _bg_error = None
             _last_redis = time.time()
             while True:
+                _stop_reason = _gen_stop_reason()
+                if _stop_reason:
+                    logger.info(f'Generation cancelled by user: chat={new_chat_id}')
+                    _work_control['cancelled'] = _stop_reason == 'cancelled'
+                    _pump_stop()
+                    _bg_error = _work_runtime.WorkInterrupted(_stop_reason) if mode == 'work' else InterruptedError('Generation cancelled')
+                    break
+                if time.time() - _gen_start > _MAX_TOTAL or time.time() - _last_content > _MAX_SILENCE:
+                    _bg_error = TimeoutError('Background generation deadline exceeded')
+                    _pump_stop()
+                    break
                 if (time.time() - _last_redis) > 0.7:
                     _gen_save()
                     _last_redis = time.time()
-                if _gen_cancelled():
-                    logger.info(f'Generation cancelled by user: chat={new_chat_id}')
-                    _pump_stop()
-                    break
                 if _bg_error is not None:
                     break
                 try:
@@ -1595,6 +1811,8 @@ def send_message_stream():
                         _pump_start(_gen)
                     _kind, _chunk = _pump_next(2.0)
                     if _kind == 'end':
+                        if mode == 'work' and _work_status != 'completed':
+                            _bg_error = RuntimeError('Work did not complete')
                         break
                     if _kind == 'ping':
                         continue
@@ -1603,6 +1821,7 @@ def send_message_stream():
                     logger.error(f'Background stream error chat={new_chat_id}: {_ge}', exc_info=True)
                     break
                 try:
+                    _last_content = time.time()
                     _step(_chunk)
                 except GeneratorExit:
                     # Worker shutting down / stream fully torn down -- persist what we have
@@ -1612,55 +1831,48 @@ def send_message_stream():
                     _bg_error = _ste
                     logger.error(f'Background step error chat={new_chat_id}: {_ste}', exc_info=True)
                     break
-            _gen_clear()
             try:
+                # Always persist first before clearing Redis so messages and work trace are NEVER lost!
                 if _bg_error or _gen_cancelled():
-                    if full_content.strip():
-                        from models import Message as _DBMGX
-                        part_art = ai_service._extract_artifact(full_content) or _tolerant_artifact(full_content) or ai_service._extract_code_block(full_content)
-                        gx_msg = _DBMGX(chat_id=new_chat_id, role='assistant', content=full_content, artifact_data=part_art)
-                        db.session.add(gx_msg)
-                        try:
-                            from models import Chat as _ChatGX
-                            _cgx = _ChatGX.query.get(new_chat_id)
-                            if _cgx:
-                                _cgx.updated_at = datetime.utcnow()
-                        except Exception:
-                            pass
-                        db.session.commit()
-                        if not _tokens_recorded and not _mem_extract:
-                            try:
-                                from models import User as _GXU
-                                _gxu = _GXU.query.get(user_id)
-                                if _gxu:
-                                    _gxu.record_usage(_chat_units(len(full_content)), model)
-                                    db.session.commit()
-                            except Exception as _gxe:
-                                db.session.rollback()
-                                logger.warning(f'bg partial usage record failed: {_gxe}')
-                        _tokens_recorded = True
-                        logger.info(f'Partial response saved on bg stop: chat={new_chat_id} len={len(full_content)}')
-                    else:
-                        db.session.rollback()
+                    _bg_reason = 'cancelled' if _gen_cancelled() else getattr(_bg_error, 'reason', _work_reason or 'connection')
+                    _work_terminal('cancelled' if _bg_reason == 'cancelled' else 'interrupted', _bg_reason)
+                    _msg_id, _art = _persist(partial=True)
+                    logger.info(f'Partial response saved on bg stop: chat={new_chat_id} msg={_msg_id} len={len(full_content)}')
                 else:
                     _msg_id, _art = _persist(partial=False)
                     logger.info(f'Background generation finished: chat={new_chat_id} msg={_msg_id} len={len(full_content)}')
             except Exception as _pe:
                 logger.error(f'Background persist failed: {_pe}', exc_info=True)
                 db.session.rollback()
+            finally:
+                if _gen_key:
+                    _gen_finish(('cancelled' if _gen_cancelled() else 'interrupted') if _bg_error else 'done',
+                                _work_reason if _bg_error else None)
             return
 
         # ── Connected path — stream finished normally, finalize and send `done` ──
-        _candidate_art = _stream_pptx if _stream_pptx else (ai_service._extract_artifact(full_content) or _tolerant_artifact(full_content) or ai_service._extract_code_block(full_content))
+        _candidate_art = _stream_pptx or _stream_pdf or (ai_service._extract_artifact(full_content) or _tolerant_artifact(full_content) or ai_service._extract_code_block(full_content))
+        if mode == 'work' and not _candidate_art:
+            try:
+                for w in reversed(_stream_work):
+                    if w.get('type') == 'preview' and w.get('fid'):
+                        _candidate_art = _pdf_artifact('/api/files/' + w['fid'])
+                        break
+            except Exception:
+                pass
         if _candidate_art:
             _cbox = {}
             try:
                 _is_deck = (_candidate_art.get('type') == 'pptx' or str(_candidate_art.get('name', '')).endswith('.pptx'))
+                _is_pdf = (_candidate_art.get('type') == 'pdf' or str(_candidate_art.get('name', '')).endswith('.pdf'))
                 _stream_thinking = (('Compilando presentación PowerPoint...' if language == 'es' else 'Compiling PowerPoint presentation...')
-                                    if _is_deck else ('Compilando documento...' if language == 'es' else 'Compiling document...'))
+                                    if _is_deck else ('Compilando documento PDF...' if language == 'es' else 'Compiling document PDF...') if _is_pdf else ('Compilando documento...' if language == 'es' else 'Compiling document...'))
                 if _gen_key:
                     _gen_save()
-                _candidate_art = yield from _run_with_pings(_cbox, _compile_pptx_artifact, _candidate_art)
+                if _is_deck:
+                    _candidate_art = yield from _run_with_pings(_cbox, _compile_pptx_artifact, _candidate_art)
+                elif _is_pdf:
+                    _candidate_art = yield from _run_with_pings(_cbox, _compile_pdf_artifact, _candidate_art, language)
             except GeneratorExit:
                 # The client left while the deck was compiling: finish silently and persist,
                 # the poller / next visit will show the message. No more yields allowed.
@@ -1700,12 +1912,22 @@ def send_message_stream():
                 client_gone = True
             except Exception as _hoe:
                 logger.warning(f'chat handoff failed: {_hoe}')
+        if _gen_cancelled():
+            _pump_stop()
+            for _state_ev in _work_terminal('cancelled', 'cancelled'):
+                if not client_gone:
+                    yield f"data: {json.dumps(_state_ev)}\n\n"
+            _persist(partial=True, artifact=_candidate_art)
+            _gen_finish('cancelled', 'cancelled')
+            if not client_gone:
+                yield f"data: {json.dumps({'error': 'Trabajo detenido.' if language == 'es' else 'Work stopped.'})}\n\n"
+            return
         _msg_id, _artifact = _persist(partial=False, artifact=_candidate_art)
         if client_gone:
             _gen_clear()
             logger.info(f'Persisted after client left during compile: chat={new_chat_id} msg={_msg_id}')
             return
-        _gen_clear()
+        _gen_finish('done')
         _art_info = f"name={_artifact.get('name','?')} content_len={len(_artifact.get('content',''))}" if _artifact else 'NONE'
         logger.info(f'DONE event: artifact={_art_info} full_content_len={len(full_content)} tokens={max(len(full_content) // 4, 1)}')
         _done = {'done': True, 'artifact': _artifact, 'msg_id': _msg_id}
@@ -1746,7 +1968,26 @@ def _gen_redis_payload(chat_id):
         _v = _redis_client.get(f'{_GEN_PREFIX}{chat_id}')
         if not _v:
             return None
-        return json.loads(_v)
+        _p = json.loads(_v)
+        if (_p.get('mode') == 'work' and _p.get('status') == 'generating'
+                and time.time() - float(_p.get('ts', 0)) > 300):
+            # A dead worker must not look busy for the entire (potentially eight-hour) TTL.
+            # The stop marker also prevents a delayed worker from resuming browser actions.
+            _reason = 'worker_unavailable'
+            _redis_client.setex(f'{_GEN_PREFIX}{chat_id}:stop', 86400,
+                                json.dumps({'ts': time.time(), 'reason': _reason}))
+            _p.update(status='interrupted', reason=_reason)
+            _work = [dict(w) for w in _p.get('work', []) if w.get('type') != 'state']
+            for _step in _work:
+                if _step.get('type') == 'step' and _step.get('status') == 'run':
+                    _step.update(status='err', error=_reason)
+            _work.append({'type': 'state', 'status': 'interrupted', 'reason': _reason})
+            _p['work'] = _work
+            if isinstance(_p.get('checkpoint'), dict):
+                _p['checkpoint']['reason'] = _reason
+                _redis_client.setex(f'deiza:work:checkpoint:{chat_id}', 86400, json.dumps(_p['checkpoint']))
+            _redis_client.setex(f'{_GEN_PREFIX}{chat_id}', 300, json.dumps(_p))
+        return _p
     except Exception as _gre:
         logger.debug(f'gen payload error: {_gre}')
         return None
@@ -1811,6 +2052,13 @@ def get_generation(chat_id):
         'sources': _p.get('sources', []),
         'images': _p.get('images', []),
         'ts': _p.get('ts', 0),
+        'work': _p.get('work', []),
+        'shot': _p.get('shot'),
+        'plan': _p.get('plan'),
+        'artifact': _p.get('artifact'),
+        'mode': _p.get('mode', 'chat'),
+        'reason': _p.get('reason'),
+        'checkpoint': _p.get('checkpoint'),
         **({'image': _p['image']} if _p.get('image') else {}),
     })
 
@@ -1830,7 +2078,10 @@ def cancel_generation(chat_id):
         if not _v:
             return jsonify({'cancelled': False})
         _p = json.loads(_v)
+        if _p.get('status') != 'generating':
+            return jsonify({'cancelled': False})
         _p['status'] = 'cancelled'
+        _redis_client.setex(f'{_GEN_PREFIX}{chat_id}:cancel', 86400, str(time.time()))
         _redis_client.setex(f'{_GEN_PREFIX}{chat_id}', 120, json.dumps(_p))
         return jsonify({'cancelled': True})
     except Exception as _ce:

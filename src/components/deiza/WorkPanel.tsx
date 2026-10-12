@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, RotateCw, X, Loader2, Globe, ImageIcon, Maximize2, Minimize2, MonitorUp } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RotateCw, X, Loader2, Globe, ImageIcon, Maximize2, Minimize2, MonitorUp, ArrowUp, Square } from 'lucide-react';
 import { api, assetUrl, hasLocalBrowser } from '@/services/api';
 import { useLanguage } from '@/contexts/LanguageContext';
-import type { WorkFile, WorkShot } from '@/lib/workTypes';
+import type { WorkFile, WorkShot, WorkState } from '@/lib/workTypes';
+import AudioRecorder from './AudioRecorder';
+import ModelSelector, { type ModelKey, type Effort } from './ModelSelector';
 
 const SPECIAL_KEYS = new Set(['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft',
   'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End']);
@@ -19,6 +21,14 @@ interface Props {
   overlay?: boolean;
   maximized?: boolean;
   onToggleMax?: () => void;
+  model: ModelKey;
+  effort: Effort;
+  userPlan: string;
+  onModelChange: (model: ModelKey) => void;
+  onEffortChange: (effort: Effort) => void;
+  onSend: (text: string) => Promise<boolean>;
+  onStop: () => void;
+  work?: WorkState;
 }
 
 /** Where the picture really sits inside its box (object-fit: contain). */
@@ -36,12 +46,16 @@ function contentRect(img: HTMLImageElement) {
  * server sizes its viewport to the panel's shape) and Deiza's pointer shows where it acts.
  * In Deiza for desktop the browser runs on the user's computer, full screen, and this is a mirror.
  */
-const WorkPanel = ({ chatId, shot, onShot, files, agentBusy, onClose, overlay, maximized, onToggleMax }: Props) => {
+const WorkPanel = ({ chatId, shot, onShot, files, agentBusy, onClose, overlay, maximized, onToggleMax,
+  model, effort, userPlan, onModelChange, onEffortChange, onSend, onStop, work }: Props) => {
   const { t } = useLanguage();
   const local = hasLocalBrowser();
   const [tab, setTab] = useState<'browser' | 'files'>('browser');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [voice, setVoice] = useState('idle');
   const [address, setAddress] = useState(shot?.url || '');
   const [editingAddress, setEditingAddress] = useState(false);
   const [echo, setEcho] = useState('');
@@ -55,6 +69,20 @@ const WorkPanel = ({ chatId, shot, onShot, files, agentBusy, onClose, overlay, m
   const queue = useRef<Promise<void>>(Promise.resolve());
   const viewport = useRef<{ w: number; h: number } | null>(null);
   const sentViewport = useRef('');
+
+  useEffect(() => { setDraft(''); setError(''); }, [chatId]);
+  useEffect(() => () => {
+    if (typeTimer.current) clearTimeout(typeTimer.current);
+    if (wheelTimer.current) clearTimeout(wheelTimer.current);
+  }, []);
+  const send = async () => {
+    const text = draft.trim();
+    if (!text || sending || voice !== 'idle') return;
+    setSending(true);
+    try {
+      if (await onSend(text)) setDraft(prev => prev.trim() === text ? '' : prev);
+    } finally { setSending(false); }
+  };
 
   useEffect(() => { if (!editingAddress && shot?.url) setAddress(shot.url); }, [shot?.url, editingAddress]);
   // Deiza's pointer follows the agent's last click or drag.
@@ -282,7 +310,34 @@ const WorkPanel = ({ chatId, shot, onShot, files, agentBusy, onClose, overlay, m
               </div>
             )}
           </div>
-          {error && <p className="mx-3 mb-2 -mt-1 text-[12px] text-destructive/85 shrink-0">{error}</p>}
+          {error && <p className="mx-3 mb-2 -mt-1 text-[12px] text-destructive/85 shrink-0" role="alert">{error}</p>}
+          <div className="border-t border-border/30 px-3 py-2.5 shrink-0 bg-card/30">
+            <div className="flex items-center gap-2 mb-2 text-[11.5px] text-muted-foreground min-w-0">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${agentBusy ? 'bg-primary' : 'bg-muted-foreground/40'}`} />
+              <span className="truncate" role="status">{agentBusy ? t('ws.work.running') : work?.status === 'interrupted' ? t('ws.work.interrupted') : work?.status === 'cancelled' ? t('ws.work.cancelled') : t('ws.work.ready')}</span>
+              {agentBusy && work?.checkpoint && <span className="ml-auto shrink-0 tabular-nums">{Math.floor(work.checkpoint.elapsed_seconds / 60)} min · {work.checkpoint.steps ?? work.items.filter(x => x.kind === 'step').length}</span>}
+              {agentBusy && <button onClick={onStop} className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-muted focus-ring text-foreground" title={t('ws.kbd.stop')}><Square className="w-2.5 h-2.5" />{t('ws.kbd.stop')}</button>}
+            </div>
+            <div className="rounded-xl border border-border/45 bg-background focus-within:border-primary/50 transition-colors">
+              <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={2} maxLength={8000}
+                aria-label={t('ws.work.message')} placeholder={agentBusy ? t('ws.work.steer_placeholder') : t('ws.work.message')}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }}
+                className="w-full resize-none bg-transparent px-3 pt-2.5 text-[13px] leading-5 outline-none placeholder:text-muted-foreground/85" />
+              <div className="flex items-center gap-2 px-2 pb-2">
+                <span className="mr-auto text-[10.5px] text-muted-foreground/85">{voice === 'recording' ? t('aud.listening') : voice === 'transcribing' ? t('aud.transcribing') : agentBusy ? t('ws.work.queued_hint') : t('ws.work.enter_hint')}</span>
+                <AudioRecorder size="sm" disabled={sending || !chatId} onStateChange={setVoice}
+                  onTranscript={text => setDraft(prev => [prev.trim(), text.trim()].filter(Boolean).join(' ').slice(0, 8000))} />
+                <button onClick={() => void send()} disabled={!draft.trim() || sending || voice !== 'idle' || !chatId}
+                  aria-label={t('ws.work.send')} className="w-7 h-7 rounded-full bg-primary text-primary-foreground inline-flex items-center justify-center focus-ring disabled:opacity-40">
+                  {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUp className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2 mt-1.5">
+              <span className="text-[10.5px] text-muted-foreground/85">{agentBusy ? t('ws.work.next_task') : 'Deiza Work'}</span>
+              <ModelSelector model={model} onModelChange={onModelChange} effort={effort} onEffortChange={onEffortChange} userPlan={userPlan} hideFast align="right" />
+            </div>
+          </div>
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-auto p-3">

@@ -284,24 +284,24 @@ export const NEWS: NewsItem[] = [
     hero: '/art/liquid5.webp',
   },
   {
-    id: 'dhisper',
+    id: 'voice',
     date: '2026-09-11',
     tag: { es: 'Motor de voz', en: 'Voice engine' },
-    title: { es: 'Dhisper: Deiza aprende a escuchar y a hablar', en: 'Dhisper: Deiza learns to listen and speak' },
+    title: { es: 'Deiza aprende a escuchar y a hablar', en: 'Deiza learns to listen and speak' },
     excerpt: {
       es: 'Nuevo motor de voz. Dicta en el idioma que quieras —o mezclando varios— y escucha las respuestas con una voz cálida y natural.',
       en: 'A new voice engine. Dictate in any language — or mix several — and listen to answers in a warm, natural voice.',
     },
     body: {
       es: [
-        'Dhisper sustituye al dictado del navegador. Ya no tienes que elegir idioma: reconoce el que hablas, respeta la puntuación y entiende cuando cambias de español a inglés a mitad de frase. Funciona igual en la web, en iPhone y en Android, con una onda de audio en vivo mientras grabas.',
+        'El nuevo motor de voz sustituye al dictado del navegador. Ya no tienes que elegir idioma: reconoce el que hablas, respeta la puntuación y entiende cuando cambias de español a inglés a mitad de frase. Funciona igual en la web, en iPhone y en Android, con una onda de audio en vivo mientras grabas.',
         'También lee las respuestas en voz alta: pulsa «Escuchar» bajo cualquier mensaje. La voz es natural y conversacional, empieza a sonar en segundos y el texto se limpia antes de leerlo (sin leer código ni símbolos de formato).',
-        'Dhisper llega con Liquid 5 y forma parte de la misma actualización de interfaz.',
+        'El motor de voz llega con Liquid 5 y forma parte de la misma actualización de interfaz.',
       ],
       en: [
-        'Dhisper replaces browser dictation. You no longer pick a language: it recognises the one you speak, keeps punctuation and understands when you switch from Spanish to English mid-sentence. It works the same on web, iPhone and Android, with a live waveform while you record.',
+        'The new voice engine replaces browser dictation. You no longer pick a language: it recognises the one you speak, keeps punctuation and understands when you switch from Spanish to English mid-sentence. It works the same on web, iPhone and Android, with a live waveform while you record.',
         'It also reads answers aloud: tap “Listen” under any message. The voice is natural and conversational, starts within seconds, and the text is cleaned before reading (no code or formatting symbols read out).',
-        'Dhisper ships with Liquid 5 as part of the same interface update.',
+        'The voice engine ships with Liquid 5 as part of the same interface update.',
       ],
     },
     art: 'chat',

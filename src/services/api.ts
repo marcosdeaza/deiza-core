@@ -294,11 +294,16 @@ class APIService {
 
   /** local browser v1: answer a browser request of a Work chat with what this computer saw. */
   async workLocalResult(chatId: number, requestId: string, result: Record<string, any>): Promise<void> {
-    await fetch(`${this.baseUrl}/api/work/local/${chatId}/${requestId}`, {
+    const resp = await fetch(`${this.baseUrl}/api/work/local/${chatId}/${requestId}`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ result }),
     });
+    if (!resp.ok) throw new Error(`work_local_${resp.status}`);
+  }
+
+  async workLocalPending(): Promise<{ requests: Array<{ id: string; chat_id: number; action: string; args?: any }> }> {
+    return this.request('/api/work/local/pending');
   }
 
   async workBrowser(chatId: number, body: Record<string, any>): Promise<any> {
@@ -559,7 +564,9 @@ class APIService {
     // Inactivity watchdog: a long answer is fine as long as bytes keep arriving (the backend
     // sends ": ping" every 12 s while the model is silent). A real silence or a hard cap aborts.
     const SILENCE_MS = 150000;
-    const HARD_CAP_MS = 20 * 60 * 1000;
+    // Work has its own bounded server budget (up to eight hours). The transport must
+    // not detach a healthy job at twenty minutes; silence still has its watchdog.
+    const HARD_CAP_MS = 9 * 60 * 60 * 1000;
     let watchdog: ReturnType<typeof setTimeout> | null = null;
     const fail = () => {
       if (!completed && !aborted) {
@@ -677,7 +684,7 @@ class APIService {
     return (res as any)?.generations || {};
   }
 
-  async getGeneration(chatId: number): Promise<{ status: string; content: string; thinking: string; ts: number; image?: { aspect: string; started?: number } } | null> {
+  async getGeneration(chatId: number): Promise<{ status: string; content: string; thinking: string; ts: number; image?: { aspect: string; started?: number }; work?: any[]; shot?: string; plan?: any[]; artifact?: any; mode?: string } | null> {
     try {
       const res = await this.request(`/api/chats/${chatId}/gen`, { method: 'GET' });
       if (!res || (res as any).status === 'none' || (res as any).error) return null;

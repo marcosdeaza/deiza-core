@@ -25,6 +25,10 @@ Es compatible con cualquier endpoint y API. Cada URL, clave y modelo sale de un 
 - Proyectos con archivos e instrucciones propias, memoria del usuario y skills importadas en Markdown.
 - Conversaciones y artefactos compartibles como instantáneas de solo lectura.
 
+Work conserva sus checkpoints y permite continuar tras una interrupción, con un límite por defecto de dos horas y 600 rondas, configurable mediante `WORK_MAX_SECONDS` y `WORK_MAX_ROUNDS` hasta ocho horas y 2400 rondas; un reinicio del backend interrumpe la ejecución y requiere una nueva petición para continuar.
+El navegador local recupera las órdenes pendientes al reconectar, aunque cambies de conversación, y su panel incluye dictado para escribir instrucciones, sin conversación de voz en tiempo real.
+Liquid 5.5 mantiene el esfuerzo adaptativo por defecto; el selector permite elegir el modelo y el esfuerzo del próximo encargo.
+
 **Documentos y presentaciones**
 - `backend/deiza_mapper`: motor HTML-first que genera PDF, DOCX y PPTX con temas, fotos verificadas y maquetación a medida, renderizado con Chromium.
 

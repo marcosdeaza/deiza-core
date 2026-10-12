@@ -279,6 +279,44 @@ class BrowserOwner(threading.Thread):
         return out;
     }"""  # browser elements v3
 
+    # board v1: the chess board of the page (chess.com, lichess...), its box and who plays from below
+    BOARD_JS = r"""(() => {
+  const pick = () => {
+    let best = null, score = 0;
+    for (const el of document.querySelectorAll('wc-chess-board, chess-board, cg-board, cg-container, .cg-wrap, #board-layout-chessboard, [class*="board"], [id*="board"], canvas')) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 160 || r.height < 160 || Math.abs(r.width - r.height) > Math.max(r.width, r.height) * 0.08) continue;
+      const cs = getComputedStyle(el);
+      if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+      const v = r.width * r.height * (/^(WC-CHESS-BOARD|CHESS-BOARD|CG-BOARD)$/.test(el.tagName) ? 1.6 : 1);
+      if (v > score) { best = el; score = v; }
+    }
+    return best;
+  };
+  let el = pick();
+  if (!el) return null;
+  let r = el.getBoundingClientRect();
+  if (r.top < 0 || r.bottom > innerHeight) { el.scrollIntoView({ block: 'center', behavior: 'instant' }); r = el.getBoundingClientRect(); }
+  const black = el.classList.contains('flipped') || !!el.closest('.flipped, .orientation-black') ||
+    !!document.querySelector('wc-chess-board.flipped, chess-board.flipped, .cg-wrap.orientation-black');
+  return { x: r.left, y: r.top, w: r.width, h: r.height, orientation: black ? 'black' : 'white', tag: el.tagName.toLowerCase() };
+})()"""
+    PROMO_JS = r"""(a) => {
+      const names = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
+      const el = document.querySelector('.promotion-window .promotion-piece.' + a.c + a.p) || document.querySelector('.promotion-piece.' + a.c + a.p) ||
+        document.querySelector('#promotion-choice piece.' + names[a.p]) || document.querySelector('[class*="promotion"] [class*="' + names[a.p] + '"]');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }"""
+
+    @staticmethod
+    def _square(b, sq):
+        f, r = 'abcdefgh'.index(sq[0]), int(sq[1]) - 1
+        col = f if b['orientation'] == 'white' else 7 - f
+        row = 7 - r if b['orientation'] == 'white' else r
+        return b['x'] + (col + 0.5) * b['w'] / 8, b['y'] + (row + 0.5) * b['h'] / 8
+
     @staticmethod
     def _state(page, shot=True, light=False):
         out = {'url': page.url, 'title': ''}
@@ -291,6 +329,12 @@ class BrowserOwner(threading.Thread):
                 out['elements'] = page.evaluate(BrowserOwner.ELEMENTS_JS)
             except Exception:
                 out['elements'] = []
+            try:
+                b = page.evaluate(BrowserOwner.BOARD_JS)
+                if b:
+                    out['board'] = {'x0': round(b['x']), 'y0': round(b['y']), 'w': round(b['w']), 'h': round(b['h']), 'orientation': b['orientation']}
+            except Exception:
+                pass
         if shot:
             img = page.screenshot(type='jpeg', quality=58 if light else 62)
             out['shot'] = base64.b64encode(img).decode()
@@ -413,6 +457,32 @@ class BrowserOwner(threading.Thread):
             page.mouse.move(x2, y2, steps=14)
             page.mouse.up()
             self._settle(page, 500)
+        elif action == 'board_move':
+            frm, to = str(a.get('from') or '').strip().lower(), str(a.get('to') or '').strip().lower()
+            valid = lambda q: len(q) == 2 and q[0] in 'abcdefgh' and q[1] in '12345678'
+            if not valid(frm) or not valid(to) or frm == to:
+                raise ValueError('use algebraic squares, e.g. from "e2" to "e4"')
+            b = page.evaluate(self.BOARD_JS)
+            if not b:
+                raise ValueError('no chess board found on the page: use browser_click or browser_drag with screenshot coordinates')
+            if a.get('orientation') in ('white', 'black'):
+                b['orientation'] = a['orientation']
+            ax, ay = self._square(b, frm)
+            zx, zy = self._square(b, to)
+            page.mouse.move(ax, ay)
+            page.mouse.down()
+            page.mouse.move(zx, zy, steps=8)
+            page.mouse.up()
+            piece = str(a.get('promotion') or '')[:1].lower()
+            if piece and piece in 'qrbn':
+                page.wait_for_timeout(350)
+                p = page.evaluate(self.PROMO_JS, {'p': piece, 'c': 'b' if b['orientation'] == 'black' else 'w'})
+                if p:
+                    page.mouse.click(p['x'], p['y'])
+            self._settle(page, 450)
+            out = self._state(page, True, light)
+            out['clicked'] = {'x': round(zx), 'y': round(zy)}
+            return out
         elif action == 'key':
             key = str(a.get('key') or '')
             if key not in KEYS:

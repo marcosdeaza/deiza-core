@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import uuid
+import time
 
 from deiza_mapper import images as _images
 from deiza_mapper.themes import THEMES, THEME_NAMES, DEFAULT_THEME, parse_meta, resolve_theme  # noqa: F401
@@ -209,3 +210,100 @@ def deck_pdf_path(url_or_fid: str):
     base = fid[:-5] if fid.endswith('.pptx') else fid
     p = os.path.join(UPLOADS_DIR, base + '.pdf')
     return p if os.path.isfile(p) else None
+
+
+# ── PDF documents ───────────────────────────────────────────────────────────
+def build_pdf(content: str, filename: str = 'documento.pdf', language: str = 'es', fid: str = None) -> str:
+    """Markdown or HTML document -> rendered .pdf file + page PNG previews + .meta.json sidecar.
+    Returns the file id (e.g. '<fid>.pdf')."""
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    if not (filename or '').lower().endswith('.pdf'):
+        filename = (filename or 'documento') + '.pdf'
+    clean_name = re.sub(r'[\\/:*?"<>|]+', '-', filename)[:90] or 'documento.pdf'
+
+    # 1. Render PDF bytes
+    pdf_bytes = render_pdf(content, filename=clean_name, language=language or 'es')
+    if not pdf_bytes or not pdf_bytes.startswith(b'%PDF'):
+        raise RuntimeError('PDF render produced invalid or empty output')
+
+    fid = fid or (uuid.uuid4().hex + '.pdf')
+    if not fid.lower().endswith('.pdf'):
+        fid += '.pdf'
+    base = fid[:-4] if fid.lower().endswith('.pdf') else fid
+    pdf_path = os.path.join(UPLOADS_DIR, fid)
+
+    with open(pdf_path, 'wb') as fh:
+        fh.write(pdf_bytes)
+
+    # 2. Extract title from content
+    title = clean_name.replace('.pdf', '')
+    for line in (content or '').splitlines():
+        line = line.strip()
+        if line.startswith('# '):
+            title = line[2:].strip()
+            break
+        elif line.startswith('title:'):
+            parts = line.split(':', 1)
+            if len(parts) > 1:
+                title = parts[1].strip().strip('"').strip("'")
+            break
+
+    # 3. Render page previews via pypdfium2
+    previews = []
+    num_pages = 1
+    try:
+        import pypdfium2 as pdfium
+        doc = pdfium.PdfDocument(pdf_bytes)
+        num_pages = len(doc)
+        for i, page in enumerate(doc):
+            if i >= 16:  # limit to 16 preview pages
+                break
+            img = page.render(scale=1.5).to_pil()
+            pname = f'{base}_p{i + 1}.png'
+            p_path = os.path.join(UPLOADS_DIR, pname)
+            img.save(p_path, format='PNG')
+            previews.append(f'/api/files/{pname}')
+    except Exception as e:
+        logger.warning(f'build_pdf preview rendering error: {e}')
+
+    # 4. Save metadata sidecars
+    meta = {
+        'title': title[:120],
+        'filename': clean_name,
+        'pages': num_pages,
+        'previews': previews,
+        'size': len(pdf_bytes),
+        'created_at': time.time()
+    }
+    try:
+        with open(pdf_path + '.previews.json', 'w', encoding='utf-8') as fh:
+            json.dump(previews, fh)
+        with open(pdf_path + '.meta.json', 'w', encoding='utf-8') as fh:
+            json.dump(meta, fh, ensure_ascii=False)
+        with open(pdf_path + '.src.md', 'w', encoding='utf-8') as fh:
+            fh.write(content)
+    except Exception as e:
+        logger.debug(f'build_pdf sidecar error: {e}')
+
+    logger.info(f'pdf built: {fid} ({num_pages} pages, {len(previews)} previews)')
+    return fid
+
+
+def load_pdf_previews(url_or_fid: str) -> list:
+    """Return list of page PNG preview URLs for a PDF."""
+    p = _sidecar(url_or_fid, '.previews.json')
+    try:
+        with open(p) as fh:
+            return json.load(fh)
+    except Exception:
+        return []
+
+
+def load_pdf_meta(url_or_fid: str) -> dict:
+    """Return metadata dict (title, filename, pages, previews) for a PDF."""
+    p = _sidecar(url_or_fid, '.meta.json')
+    try:
+        with open(p, encoding='utf-8') as fh:
+            return json.load(fh)
+    except Exception:
+        return {}

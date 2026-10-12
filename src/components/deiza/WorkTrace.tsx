@@ -44,6 +44,7 @@ const WorkTrace = ({ work, live, thinking, onOpenComputer }: Props) => {
   const running = steps.filter(s => s.kind === 'step' && s.status === 'run').pop();
   const headline = live
     ? (running && running.kind === 'step' ? running.label : thinking || t('ws.work.working'))
+    : work.status === 'interrupted' ? t('ws.work.interrupted') : work.status === 'cancelled' ? t('ws.work.cancelled')
     : steps.length === 1 ? t('ws.work.done_one') : t('ws.work.done', { n: steps.length });
 
   return (

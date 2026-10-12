@@ -5,6 +5,7 @@ Returns the browser state ({url, title, shot (JPEG base64), w, h}). Only the own
 can drive its browser; the session is the same one the agent uses, so both see the same page.
 """
 import time
+import re
 import logging
 import threading
 from collections import defaultdict, deque
@@ -32,6 +33,37 @@ def _allowed(uid):
 
 
 def register_work(app, auth_decorator):
+    @app.route('/api/work/local/pending', methods=['GET'])
+    @auth_decorator
+    def work_local_pending():
+        """Recover local browser requests independently of the active chat's SSE connection."""
+        import json
+        from models import Chat
+        import work_agent
+        uid = session.get('user_id')
+        pending = []
+        try:
+            r = work_agent._redis()
+            index = f'deiza:work:lbpending:{int(uid)}'
+            for raw_id in list(r.smembers(index))[:100]:
+                rid = raw_id.decode() if isinstance(raw_id, bytes) else str(raw_id)
+                if not re.fullmatch(r'[a-f0-9]{32}', rid):
+                    r.srem(index, raw_id)
+                    continue
+                raw = r.get(f'deiza:work:lbreq:{rid}')
+                record = json.loads(raw) if raw else {}
+                chat_id = record.get('chat_id')
+                chat = Chat.query.filter_by(id=chat_id, user_id=uid).first() if chat_id else None
+                if (record.get('user_id') != uid or float(record.get('expires_at', 0)) <= time.time()
+                        or not chat or getattr(chat, 'mode', None) != 'work' or not work_agent.local_request_active(record)):
+                    r.srem(index, rid)
+                    continue
+                pending.append({k: record[k] for k in ('id', 'chat_id', 'action', 'args', 'expires_at')})
+        except Exception as exc:
+            logger.warning('work pending lookup failed: %s', type(exc).__name__)
+            return jsonify({'error': 'unavailable'}), 503
+        return jsonify({'requests': pending})
+
     @app.route('/api/work/browser/<int:chat_id>', methods=['POST'])
     @auth_decorator
     def work_browser_action(chat_id):

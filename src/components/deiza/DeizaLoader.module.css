@@ -1,0 +1,142 @@
+.loader {
+  padding-block: 20px;
+  min-width: 0;
+  font-family: var(--font-body, Inter, sans-serif);
+}
+
+.surface {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 40px;
+  width: min(100%, 460px);
+}
+
+.mark {
+  display: block;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  color: hsl(var(--primary));
+}
+
+.track {
+  opacity: 0.18;
+}
+
+.ink {
+  stroke-dasharray: 26 74;
+  stroke-dashoffset: 0;
+  animation: ink-flow 2.8s linear infinite;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  padding-block-start: 10px;
+}
+
+.label {
+  margin: 0;
+  min-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.historyToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  margin-block-start: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.historyToggle:hover {
+  color: hsl(var(--foreground));
+}
+
+.historyToggle:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 4px;
+}
+
+.historyToggle svg {
+  width: 12px;
+  height: 12px;
+}
+
+.history {
+  max-height: 160px;
+  overflow-y: auto;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.previousStep {
+  margin-block: 6px;
+  padding-inline-start: 10px;
+  border-inline-start: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.fullScreen {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: hsl(var(--background));
+}
+
+.fullScreen .surface {
+  align-items: center;
+  flex-direction: column;
+  gap: 16px;
+  width: min(100%, 320px);
+}
+
+.fullScreen .mark {
+  flex-basis: 60px;
+  width: 60px;
+  height: 60px;
+}
+
+.fullScreen .content {
+  width: 100%;
+  padding: 0;
+  text-align: center;
+}
+
+.fullScreen .label {
+  font-size: 13px;
+}
+
+@keyframes ink-flow {
+  to { stroke-dashoffset: -100; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ink {
+    animation: none;
+    stroke-dasharray: none;
+    opacity: 0.75;
+  }
+}

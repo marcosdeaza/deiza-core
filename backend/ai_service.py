@@ -798,6 +798,17 @@ Las imagenes markdown funcionan tambien dentro de PDFs y HTML (se insertan autom
 {"questions": [{"q": "Desde donde salis y cuantas personas vais?", "options": ["Solo/a", "En pareja", "Con familia (ninos)", "Grupo de amigos"]}]}
 ```
 
+**Tests interactivos y cuestionarios (quiz):**
+- Cuando el usuario pida un "tipo test", examen, cuestionario, preguntas de opción múltiple, autoevaluación o poner a prueba sus conocimientos:
+  NUNCA lo envíes como texto plano numerado ni pongas las respuestas visibles en el chat.
+  Genera SIEMPRE un bloque interactivo ```quiz con JSON estricto que contenga `title` y `questions` (cada una con `q`, exactamente 4 `options`, el índice numérico de la solución `answer` 0..3 y una explicación didáctica en `explanation`).
+  Ejemplo:
+```quiz
+{"title": "Test de Filosofía", "questions": [{"q": "¿Quién escribió el mito de la caverna?", "options": ["Platón", "Aristóteles", "Sócrates", "Kant"], "answer": 0, "explanation": "Platón describe la alegoría de la caverna en el libro VII de La República."}]}
+```
+  La interfaz lo muestra como un test interactivo que califica respuestas en tiempo real, muestra explicaciones y permite enviar los resultados para análisis.
+  Cuando el usuario comparta sus respuestas o pida analizar sus resultados, haz un diagnóstico pedagógico completo de los fallos, explica los conceptos y da consejos de estudio.
+
 **Actualidad y busqueda web (metodo de trabajo):**
 - Tienes busqueda web integrada en tiempo real. Tu conocimiento interno tiene fecha de corte: TODO lo reciente, cambiante o verificable (noticias, politica, lanzamientos de productos y modelos de IA, precios, resultados deportivos, versiones de software, fechas, personas de actualidad, "hoy", "ultimo", "reciente", el ano en curso) lo BUSCAS antes de responder. NUNCA digas "no tengo informacion sobre eso", "no existe" o "no me consta" sin haber buscado primero.
 - Si el usuario menciona algo que no reconoces (un producto, modelo, evento, empresa o nombre), asume que es posterior a tu corte de conocimiento y busca antes de opinar. Jamas corrijas al usuario diciendo que algo no existe basandote solo en tu memoria.
@@ -919,6 +930,17 @@ PDF artifact format:
 ```question
 {"questions": [{"q": "Where are you leaving from and how many people?", "options": ["Solo", "Couple", "Family (kids)", "Group of friends"]}]}
 ```
+
+**Interactive quizzes and tests (quiz):**
+- When the user asks for a quiz, multiple choice test, exam, questionnaire, or self-assessment:
+  NEVER output questions as plain text or standard lists with visible answers in chat.
+  ALWAYS output an interactive ```quiz block with strict JSON containing `title` and `questions` (each with `q`, 4 `options`, 0-based `answer` index 0..3, and didactic `explanation`).
+  Example:
+```quiz
+{"title": "Philosophy Quiz", "questions": [{"q": "Who wrote the Allegory of the Cave?", "options": ["Plato", "Aristotle", "Socrates", "Kant"], "answer": 0, "explanation": "Plato presents it in Book VII of The Republic."}]}
+```
+  The interface renders this as an interactive self-grading quiz.
+  When the user submits their results for review, act as a tutor: diagnose mistakes with clear explanations and give targeted study recommendations.
 
 **Solving exercises, homework and exams from photos (students):**
 - When the user uploads photos or screenshots of exercises, homework, exams, notes, or problems (math, physics, chemistry, syntax, coding, etc.):
@@ -2992,6 +3014,34 @@ GENERATION RULES:
             return 'high'
         return 'low'
 
+    def _liquid_thinking_level(self, contents, message, files, mode):
+        """History length is not task difficulty. Preserve reasoning for substantive follow-ups."""
+        level = self._pick_thinking_level('liquid', message or '', files, mode)
+        if level == 'high' or _prompt_v2_reasoning(message, files):
+            return 'high'
+        text = (message or '').strip()
+        followup = re.search(
+            r'^(?:[¿?¡!\s]*(?:y\b|pero\b|entonces\b|ahora\b|por qu[eé]\b|'
+            r'contin[uú]a\b|sigue\b|hazlo\b|adelante\b|s[ií][.,]?\s+(?:haz|sigue|contin)|'
+            r'expl[ií]ca(?:lo|melo)\b|corr[ií]gelo\b|c[aá]mbialo\b|modif[ií]ca\b|'
+            r'el (?:segundo|tercero|apartado)\b|and\b|but\b|now\b|why\b|continue\b|'
+            r'go on\b|do it\b|explain (?:it|that)\b|fix (?:it|that)\b|what about\b))', text, re.I)
+        if followup and len(text) < 350:
+            # The final content is this turn. Earlier user instructions determine what a
+            # short "and part b?" refers to, without turning unrelated small talk into high.
+            for previous in reversed((contents or [])[:-1]):
+                if previous.get('role') != 'user':
+                    continue
+                parts = previous.get('parts') or []
+                if any(p.get('inline_data') or p.get('inlineData') for p in parts):
+                    return 'high'
+                prior_text = '\n'.join(str(p.get('text') or '') for p in parts)
+                if (self._pick_thinking_level('liquid', prior_text, None, 'chat') == 'high'
+                        or _prompt_v2_reasoning(prior_text, None)):
+                    return 'high'
+                break
+        return level
+
     def _auto_upgrade_for_images(self, model_key: str, files: List[Dict]) -> str:
         """Gas/Fast (flash-lite) rejects image input; bounce to Liquid which reads images."""
         if model_key in ('gas', 'fast'):
@@ -3177,18 +3227,23 @@ GENERATION RULES:
         engine_url = os.getenv('CODE_API_URL', '')
         engine_key = os.getenv('CODE_API_KEY', '')
         # liquid 5.5 v1: the Liquid 5.1 engine is also the fallback of Solid 5 and Liquid 5.5 when their account is saturated
-        adaptive = 'high' if len(contents) > 2 else self._pick_thinking_level('liquid', message, files, mode)
+        adaptive = self._liquid_thinking_level(contents, message, files, mode)
+        gpt120 = ({'name': 'Gas 4.5', 'url': engine_url, 'key': engine_key,
+                   'model': '',
+                   'effort': 'medium', 'vision': False, 'read_timeout': 120} if engine_key else None)
         k25 = ({'name': 'Liquid 5.1', 'url': engine_url, 'key': engine_key,
                 'model': os.getenv('CODE_MODEL_LIQUID', ''),
-                'effort': adaptive, 'vision': True, 'read_timeout': 90} if engine_key else None)
+                'effort': adaptive, 'vision': True, 'read_timeout': 90,
+                'fallback': dict(gpt120) if gpt120 else None} if engine_key else None)
         k3 = ({'url': os.getenv('SOLID_API_URL', ''),
                'key': os.getenv('SOLID_API_KEY', ''), 'model': os.getenv('CODE_MODEL_SOLID', ''),
                'vision': True} if os.getenv('SOLID_API_KEY') else None)
         if model_key in ('solid', 'ultra') and k3:
-            return dict(k3, name='Solid 5', effort='high', read_timeout=300,
-                        fallback=(dict(k25, effort='high', read_timeout=180) if k25 else None))
+            k25_fb = dict(k25, effort='high', read_timeout=180, fallback=dict(gpt120) if gpt120 else None) if k25 else (dict(gpt120) if gpt120 else None)
+            return dict(k3, name='Solid 5', effort='high', read_timeout=300, fallback=k25_fb)
         if model_key in ('liquid', 'pro') and k3 and variant not in ('liquid51', 'liquid45') and liquid55_enabled():
-            return dict(k3, name='Liquid 5.5', effort=adaptive, read_timeout=180, fallback=k25)
+            k25_fb = dict(k25, effort=adaptive, read_timeout=180, fallback=dict(gpt120) if gpt120 else None) if k25 else (dict(gpt120) if gpt120 else None)
+            return dict(k3, name='Liquid 5.5', effort=adaptive, read_timeout=180, fallback=k25_fb)
         if not engine_key:
             return None
         if model_key in ('liquid', 'pro'):
@@ -3276,13 +3331,15 @@ GENERATION RULES:
             if use_web and rnd < 4:
                 body['tools'] = tools
             resp = None
-            for attempt in range(3):
+            attempts = 2 if engine.get('fallback') else 3
+            for attempt in range(attempts):
                 try:
                     resp = _rq.post(url, headers=headers, json=body, stream=True, timeout=(20, engine.get('read_timeout', 300)))
                 except Exception as e:
                     logger.warning(f'{label} unreachable (attempt {attempt + 1}): {e}')
                     resp = None
-                    time.sleep(1.0 + attempt)
+                    if attempt + 1 < attempts:
+                        time.sleep(1.0 + attempt)
                     continue
                 if resp.status_code == 200:
                     break
@@ -3297,7 +3354,8 @@ GENERATION RULES:
                 if resp.status_code not in (408, 500, 502, 503, 504):
                     raise RuntimeError(f'{label} HTTP {resp.status_code}')
                 resp = None
-                time.sleep(1.0 + attempt)
+                if attempt + 1 < attempts:
+                    time.sleep(1.0 + attempt)
             if resp is None:
                 raise RuntimeError(f'{label} unavailable')
             resp.encoding = 'utf-8'
@@ -3305,7 +3363,7 @@ GENERATION RULES:
             reasoning_field = 'reasoning_content'
             finish = None
             try:
-              for line in resp.iter_lines(decode_unicode=True):
+              for line in resp.iter_lines(chunk_size=1, decode_unicode=True):
                   if not line or not line.startswith('data:'):
                       continue
                   raw = line[5:].strip()
@@ -3535,6 +3593,20 @@ GENERATION RULES:
                           '```question\n{"questions":[{"q":"...","options":["...","..."]}]}\n``` (max 3 questions, 2-5 '
                           'options each). The interface turns it into buttons. If you can assume something reasonable or leave a [bracketed] placeholder, '
                           'do not ask: do it.')
+
+        _msg_fold = (message or '').lower()
+        _is_quiz_analysis = any(w in _msg_fold for w in ('he completado el test', 'resultado del test', 'mis respuestas', 'analizar resultado', 'analiza mi resultado', 'de aciertos', 'puntuacion de', 'puntuación de'))
+        _is_quiz_gen = any(w in _msg_fold for w in ('tipo test', 'test de', 'examen tipo', 'cuestionario', 'quiz', 'preguntas tipo test', 'autoevaluaci', 'trivia', 'ponme a prueba', 'evalua mis', 'evalúa mis', 'multiple choice', 'opcion multiple', 'opción múltiple'))
+
+        if _is_quiz_analysis:
+            system_prompt += ('\n\n---\nREGLA DE ANÁLISIS DE TEST: El usuario ha completado un test y te comparte sus resultados. NUNCA generes otro bloque ```quiz vacío. Actúa como tutor pedagógico: felicita el esfuerzo, analiza los aciertos y fallos uno a uno, explica con profundidad y cercanía los conceptos fallados para que los entienda a la primera, y dale 2 o 3 consejos prácticos de repaso.'
+                              if language == 'es' else
+                              '\n\n---\nQUIZ ANALYSIS RULE: The user has completed a quiz and shared their results. NEVER generate a new empty ```quiz block. Act as a personal tutor: celebrate achievements, analyze mistakes one by one explaining the core concepts, and provide practical revision tips.')
+        elif _is_quiz_gen:
+            system_prompt += ('\n\n---\nREGLA DE TIPO TEST: El usuario pide un test o cuestionario. NUNCA lo escribas como texto plano ni como lista convencional en el chat. Escribe 1 frase breve de introducción y genera SIEMPRE el bloque interactivo ```quiz con JSON estricto (título y preguntas con 4 opciones, índice de la respuesta correcta "answer" 0..3 y explicación didáctica en "explanation"):\n```quiz\n{"title": "...", "questions": [{"q": "...", "options": ["...", "..."], "answer": 0, "explanation": "..."}]}\n```\nLa interfaz lo convierte automáticamente en una prueba interactiva.'
+                              if language == 'es' else
+                              '\n\n---\nQUIZ RULE: The user is asking for a quiz or test. NEVER output questions as plain text or standard markdown lists. Write 1 brief intro sentence and ALWAYS output the interactive ```quiz block with strict JSON (title, questions with 4 options, "answer" index 0..3, and didactic "explanation"):\n```quiz\n{"title": "...", "questions": [{"q": "...", "options": ["...", "..."], "answer": 0, "explanation": "..."}]}\n```\nThe interface converts this into an interactive self-grading quiz.')
+
 
         contents = _history_contents(history, current_message=message)
 

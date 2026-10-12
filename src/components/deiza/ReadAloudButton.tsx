@@ -37,7 +37,7 @@ const ReadAloudButton = ({ messageId, content, className = '' }: ReadAloudButton
         status === 'idle' ? 'text-muted-foreground/60 hover:text-primary' : 'text-primary bg-primary/10'
       } ${className}`}
       aria-label={label}
-      title={status === 'idle' ? `${label} · Dhisper` : label}
+      title={label}
     >
       {status === 'loading' ? (
         <Loader2 className="w-3.5 h-3.5 animate-spin" />
